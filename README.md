@@ -24,7 +24,10 @@ A configurable cascading multi-selection control for Azure DevOps work items tha
 2. Package the extension:
    ```bash
    npm run package
+   # Or use the direct command:
+   npx tfx extension create --manifest-globs vss-extension.json --no-prompt
    ```
+   This will generate a `.vsix` file (e.g., `your-publisher.cascading-multiselect-1.0.0.vsix`)
 
 3. Upload the `.vsix` file to your Azure DevOps organization
 
