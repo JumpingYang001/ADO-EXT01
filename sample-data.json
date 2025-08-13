@@ -1,0 +1,46 @@
+[
+  {
+    "id": "category1",
+    "name": "Development",
+    "expanded": true,
+    "children": [
+      { "id": "dev1", "name": "Frontend Development" },
+      { "id": "dev2", "name": "Backend Development" },
+      { "id": "dev3", "name": "Database Development" },
+      { "id": "dev4", "name": "Mobile Development" }
+    ]
+  },
+  {
+    "id": "category2",
+    "name": "Testing",
+    "expanded": false,
+    "children": [
+      { "id": "test1", "name": "Unit Testing" },
+      { "id": "test2", "name": "Integration Testing" },
+      { "id": "test3", "name": "Performance Testing" },
+      { "id": "test4", "name": "Security Testing" },
+      { "id": "test5", "name": "User Acceptance Testing" }
+    ]
+  },
+  {
+    "id": "category3",
+    "name": "Documentation",
+    "expanded": false,
+    "children": [
+      { "id": "doc1", "name": "User Documentation" },
+      { "id": "doc2", "name": "Technical Documentation" },
+      { "id": "doc3", "name": "API Documentation" }
+    ]
+  },
+  {
+    "id": "category4",
+    "name": "DevOps",
+    "expanded": false,
+    "children": [
+      { "id": "devops1", "name": "CI/CD Pipeline" },
+      { "id": "devops2", "name": "Infrastructure as Code" },
+      { "id": "devops3", "name": "Monitoring & Logging" },
+      { "id": "devops4", "name": "Container Management" }
+    ]
+  }
+]

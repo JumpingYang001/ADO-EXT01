@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Simple Test</title>
+</head>
+<body>
+    <h1>Global Function Test</h1>
+    <div id="cascading-multiselect-container" style="border: 1px solid #ccc; padding: 20px; margin: 20px 0;">
+        <p>Container for control</p>
+    </div>
+    
+    <button onclick="testGlobalFunctions()">Test Global Functions</button>
+    <button onclick="testInitialize()">Initialize Control</button>
+    
+    <div id="log" style="background: #f0f0f0; padding: 10px; margin: 20px 0; height: 200px; overflow-y: auto;"></div>
+    
+    <script>
+        // Mock SDK
+        window.SDK = {
+            init: () => Promise.resolve(),
+            ready: () => Promise.resolve(),
+            getConfiguration: () => ({
+                witInputs: {
+                    FieldName: "TestField",
+                    parentSelectMode: "true",
+                    fieldValues: JSON.stringify([
+                        {
+                            id: "test1",
+                            name: "Test Category",
+                            children: [
+                                { id: "test1_1", name: "Test Item 1" },
+                                { id: "test1_2", name: "Test Item 2" }
+                            ]
+                        }
+                    ]),
+                    multiSelectSeparator: ";"
+                }
+            }),
+            getService: () => Promise.resolve({
+                getFieldValue: () => Promise.resolve(""),
+                setFieldValue: () => Promise.resolve()
+            }),
+            notifyLoadSucceeded: () => {},
+            notifyLoadFailed: () => {}
+        };
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}<br>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function testGlobalFunctions() {
+            log('Testing global functions...');
+            log('window.CascadingMultiSelectControl: ' + typeof window.CascadingMultiSelectControl);
+            log('window.initializeCascadingControl: ' + typeof window.initializeCascadingControl);
+            
+            if (window.CascadingMultiSelectControl) {
+                log('✅ CascadingMultiSelectControl is available');
+            } else {
+                log('❌ CascadingMultiSelectControl not found');
+            }
+            
+            if (window.initializeCascadingControl) {
+                log('✅ initializeCascadingControl is available');
+            } else {
+                log('❌ initializeCascadingControl not found');
+            }
+        }
+        
+        function testInitialize() {
+            if (window.initializeCascadingControl) {
+                log('Calling initializeCascadingControl...');
+                try {
+                    const instance = window.initializeCascadingControl();
+                    if (instance) {
+                        log('✅ Control initialized successfully');
+                    } else {
+                        log('❌ Control initialization returned null');
+                    }
+                } catch (error) {
+                    log('❌ Error initializing control: ' + error.message);
+                }
+            } else {
+                log('❌ initializeCascadingControl not available');
+            }
+        }
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            log('Test page loaded');
+            // Auto-test after script loads
+            setTimeout(testGlobalFunctions, 500);
+        });
+    </script>
+    
+    <!-- Load the control script -->
+    <script src="dist/CascadingMultiSelect.js" onload="log('Script loaded successfully')" onerror="log('Script failed to load')"></script>
+</body>
+</html>

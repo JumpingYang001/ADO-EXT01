@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cascading Multi-Select Debug Environment</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .debug-panel {
+            background: #fff;
+            border: 1px solid #d1d1d1;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .debug-panel h3 {
+            margin-top: 0;
+            color: #323130;
+        }
+        .debug-controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .debug-btn {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .debug-btn:hover {
+            background: #106ebe;
+        }
+        .config-panel {
+            background: #f3f2f1;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .config-option {
+            margin: 10px 0;
+        }
+        .config-option label {
+            display: inline-block;
+            width: 150px;
+            font-weight: 600;
+        }
+        .control-container {
+            background: white;
+            border: 1px solid #d1d1d1;
+            border-radius: 4px;
+            padding: 20px;
+            max-width: 600px;
+        }
+        #debug-log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 10px;
+            border-radius: 4px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>Cascading Multi-Select Debug Environment <small style="color: #666;">(v1.1)</small></h1>
+    
+    <div class="debug-panel">
+        <h3>Debug Controls</h3>
+        <div class="debug-controls">
+            <button class="debug-btn" onclick="toggleDebugMode()">Toggle Debug Mode</button>
+            <button class="debug-btn" onclick="simulateFieldChange()">Simulate Field Change</button>
+            <button class="debug-btn" onclick="logCurrentState()">Log Current State</button>
+            <button class="debug-btn" onclick="clearDebugLog()">Clear Log</button>
+            <button class="debug-btn" onclick="reloadControl()">Reload Control</button>
+            <button class="debug-btn" onclick="window.open('/dist/CascadingMultiSelect.html', '_blank')">Open Standalone</button>
+        </div>
+        <p style="margin: 10px 0; font-size: 12px; color: #666;">
+            <strong>Quick Links:</strong> 
+            <a href="/dist/CascadingMultiSelect.html" target="_blank">Standalone Control</a> | 
+            <a href="/dist/" target="_blank">Dist Folder</a> |
+            <a href="/" target="_blank">Project Root</a>
+        </p>
+    </div>
+
+    <div class="config-panel">
+        <h3>Configuration</h3>
+        <div class="config-option">
+            <label>Parent Selectable:</label>
+            <input type="checkbox" id="parentSelectMode" checked onchange="updateConfig()">
+        </div>
+        <div class="config-option">
+            <label>Separator:</label>
+            <input type="text" id="separator" value=";" onchange="updateConfig()">
+        </div>
+        <div class="config-option">
+            <label>Sample Data:</label>
+            <select id="sampleData" onchange="updateConfig()">
+                <option value="skills">Skills Example</option>
+                <option value="tasks">Tasks Example</option>
+                <option value="tech">Technology Example</option>
+            </select>
+        </div>
+    </div>
+
+    <div class="control-container">
+        <div id="cascading-multiselect-container"></div>
+    </div>
+
+    <div class="debug-panel">
+        <h3>Debug Log</h3>
+        <div id="debug-log"></div>
+    </div>
+
+    <!-- Azure DevOps Extension SDK -->
+    <script src="https://dev.azure.com/mseng/_apis/public/gallery/extensionSDK/3.0.0/SDK.js"></script>
+    
+    <script>
+        // Debug state
+        let debugMode = true;
+        let mockFieldValue = "";
+        let currentConfig = {};
+        
+        // Sample data sets
+        const sampleDataSets = {
+            skills: [
+                {
+                    "id": "technical",
+                    "name": "Technical Skills",
+                    "expanded": true,
+                    "children": [
+                        { "id": "javascript", "name": "JavaScript" },
+                        { "id": "typescript", "name": "TypeScript" },
+                        { "id": "react", "name": "React" },
+                        { "id": "nodejs", "name": "Node.js" }
+                    ]
+                },
+                {
+                    "id": "soft_skills",
+                    "name": "Soft Skills",
+                    "children": [
+                        { "id": "communication", "name": "Communication" },
+                        { "id": "leadership", "name": "Leadership" },
+                        { "id": "teamwork", "name": "Teamwork" }
+                    ]
+                }
+            ],
+            tasks: [
+                {
+                    "id": "frontend",
+                    "name": "Frontend Tasks",
+                    "children": [
+                        { "id": "ui_design", "name": "UI Design" },
+                        { "id": "component_dev", "name": "Component Development" }
+                    ]
+                },
+                {
+                    "id": "backend",
+                    "name": "Backend Tasks",
+                    "children": [
+                        { "id": "api_dev", "name": "API Development" },
+                        { "id": "database_design", "name": "Database Design" }
+                    ]
+                }
+            ],
+            tech: [
+                {
+                    "id": "frontend_tech",
+                    "name": "Frontend Technologies",
+                    "children": [
+                        { "id": "react", "name": "React" },
+                        { "id": "vue", "name": "Vue.js" },
+                        { "id": "angular", "name": "Angular" }
+                    ]
+                },
+                {
+                    "id": "backend_tech",
+                    "name": "Backend Technologies",
+                    "children": [
+                        { "id": "nodejs", "name": "Node.js" },
+                        { "id": "dotnet", "name": ".NET Core" },
+                        { "id": "python", "name": "Python" }
+                    ]
+                }
+            ]
+        };
+
+        // Debug logging
+        function debugLog(message, data = null) {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${message}${data ? ': ' + JSON.stringify(data, null, 2) : ''}`;
+            
+            console.log(logEntry);
+            
+            const logDiv = document.getElementById('debug-log');
+            logDiv.textContent += logEntry + '\n';
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        // Mock Azure DevOps SDK
+        if (!window.SDK) {
+            window.SDK = {
+                init: () => {
+                    debugLog('SDK.init() called');
+                    return Promise.resolve();
+                },
+                ready: () => {
+                    debugLog('SDK.ready() called');
+                    return Promise.resolve();
+                },
+                getConfiguration: () => {
+                    debugLog('SDK.getConfiguration() called', currentConfig);
+                    return currentConfig;
+                },
+                getService: (serviceId) => {
+                    debugLog('SDK.getService() called', serviceId);
+                    return Promise.resolve({
+                        getFieldValue: (fieldName) => {
+                            debugLog('getFieldValue() called', fieldName);
+                            return Promise.resolve(mockFieldValue);
+                        },
+                        setFieldValue: (fieldName, value) => {
+                            debugLog('setFieldValue() called', { fieldName, value });
+                            mockFieldValue = value;
+                            return Promise.resolve();
+                        }
+                    });
+                },
+                notifyLoadSucceeded: () => {
+                    debugLog('SDK.notifyLoadSucceeded() called');
+                },
+                notifyLoadFailed: (error) => {
+                    debugLog('SDK.notifyLoadFailed() called', error);
+                }
+            };
+        }
+
+        // Debug functions
+        function toggleDebugMode() {
+            debugMode = !debugMode;
+            debugLog(`Debug mode ${debugMode ? 'enabled' : 'disabled'}`);
+        }
+
+        function simulateFieldChange() {
+            const newValue = "test1;test2;test3";
+            mockFieldValue = newValue;
+            debugLog('Simulated field change', newValue);
+        }
+
+        function logCurrentState() {
+            debugLog('Current state', {
+                debugMode,
+                mockFieldValue,
+                currentConfig,
+                globalFunctionsAvailable: {
+                    CascadingMultiSelectControl: typeof window.CascadingMultiSelectControl,
+                    initializeCascadingControl: typeof window.initializeCascadingControl
+                },
+                controlInstance: controlInstance ? 'exists' : 'null'
+            });
+        }
+
+        function clearDebugLog() {
+            document.getElementById('debug-log').textContent = '';
+        }
+
+        // Global control instance
+        let controlInstance = null;
+
+        function reloadControl() {
+            debugLog('Reloading control...');
+            
+            // Clear the container first
+            const container = document.getElementById('cascading-multiselect-container');
+            container.innerHTML = '';
+            
+            // Check if the global function is available immediately
+            if (window.initializeCascadingControl) {
+                debugLog('Using global initialization function');
+                try {
+                    controlInstance = window.initializeCascadingControl();
+                    if (controlInstance) {
+                        debugLog('Control initialized successfully');
+                    } else {
+                        debugLog('Failed to initialize control - container not found');
+                    }
+                } catch (error) {
+                    debugLog('Error during control initialization', error);
+                }
+            } else {
+                debugLog('Global initialization function not available, trying direct instantiation');
+                
+                // Try direct instantiation as fallback
+                if (window.CascadingMultiSelectControl) {
+                    try {
+                        controlInstance = new window.CascadingMultiSelectControl();
+                        debugLog('Control created using direct instantiation');
+                    } catch (error) {
+                        debugLog('Error creating control instance', error);
+                    }
+                } else {
+                    debugLog('CascadingMultiSelectControl class not available');
+                }
+            }
+        }
+
+        function updateConfig() {
+            const parentSelectMode = document.getElementById('parentSelectMode').checked;
+            const separator = document.getElementById('separator').value;
+            const sampleDataKey = document.getElementById('sampleData').value;
+            
+            currentConfig = {
+                witInputs: {
+                    FieldName: "TestField",
+                    parentSelectMode: parentSelectMode.toString(),
+                    fieldValues: JSON.stringify(sampleDataSets[sampleDataKey]),
+                    multiSelectSeparator: separator
+                }
+            };
+            
+            debugLog('Configuration updated', currentConfig);
+            reloadControl();
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            debugLog('Debug environment loaded (v1.1 - ' + new Date().toLocaleTimeString() + ')');
+            updateConfig();
+            
+            // Initialize the control after a short delay to ensure the script is loaded
+            setTimeout(() => {
+                debugLog('Attempting initial control initialization');
+                reloadControl();
+            }, 100);
+        });
+    </script>
+    
+    <!-- Load your extension -->
+    <script src="dist/CascadingMultiSelect.js?v=1.1" onload="console.log('[Debug] CascadingMultiSelect.js loaded successfully')" onerror="console.error('[Debug] Failed to load CascadingMultiSelect.js')"></script>
+</body>
+</html>
