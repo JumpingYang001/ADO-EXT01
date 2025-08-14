@@ -409,15 +409,36 @@ class CascadingMultiSelectControl {
         return;
       }
       
-      // Use the proper method to get work item form service
-      this.workItemFormService = await VSS.getService(VSS.ServiceIds.WorkItemFormService);
-      console.log('Work item form service obtained successfully');
+      // Try the most reliable method first (based on what's working in the logs)
+      const serviceIds = [
+        'ms.vss-work-web.work-item-form',
+        VSS.ServiceIds?.WorkItemFormService,
+        'ms.vss-work-web.work-item-form-service'
+      ].filter(Boolean); // Remove undefined values
       
-      // Verify service has required methods
-      if (!this.workItemFormService || 
-          !this.workItemFormService.getFieldValue || 
-          !this.workItemFormService.setFieldValue) {
-        console.log('Standard service missing methods, trying alternative...');
+      let serviceObtained = false;
+      
+      for (const serviceId of serviceIds) {
+        try {
+          console.log('Attempting to get service with ID:', serviceId);
+          this.workItemFormService = await VSS.getService(serviceId);
+          
+          // Verify service has required methods
+          if (this.workItemFormService && 
+              this.workItemFormService.getFieldValue && 
+              this.workItemFormService.setFieldValue) {
+            console.log('Service obtained with ID:', serviceId);
+            serviceObtained = true;
+            break;
+          }
+        } catch (error) {
+          // Don't log errors for expected failures - just continue to next method
+          console.log(`Service ID ${serviceId} not available, trying next...`);
+        }
+      }
+      
+      if (!serviceObtained) {
+        console.log('Standard service methods failed, trying VSS.require fallback...');
         await this.tryAlternativeServiceMethods();
         return;
       }
@@ -434,12 +455,8 @@ class CascadingMultiSelectControl {
       
     } catch (error) {
       console.error('Error getting work item form service:', error);
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined
-      });
       
-      // Try alternative methods
+      // Final fallback
       await this.tryAlternativeServiceMethods();
     }
   }
@@ -447,71 +464,45 @@ class CascadingMultiSelectControl {
   private async tryAlternativeServiceMethods(): Promise<void> {
     console.log('Trying alternative service methods...');
     
-    try {
-      // Method 1: Try using VSS.require to load the service
-      await new Promise<void>((resolve, reject) => {
-        VSS.require([
-          'TFS/WorkItemTracking/Services'
-        ], (Services: any) => {
-          try {
-            this.workItemFormService = Services.WorkItemFormService.getService();
-            console.log('Work item form service obtained via VSS.require');
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        }, (error: any) => {
-          reject(error);
+    // Method 1: Try VSS.require only if window.require exists
+    if (typeof (window as any).require === 'function') {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          VSS.require([
+            'TFS/WorkItemTracking/Services'
+          ], (Services: any) => {
+            try {
+              this.workItemFormService = Services.WorkItemFormService.getService();
+              if (this.workItemFormService?.getFieldValue && this.workItemFormService?.setFieldValue) {
+                console.log('Work item form service obtained via VSS.require');
+                resolve();
+              } else {
+                reject(new Error('Service methods not available'));
+              }
+            } catch (err) {
+              reject(err);
+            }
+          }, reject);
         });
-      });
-      
-      if (this.workItemFormService && 
-          this.workItemFormService.getFieldValue && 
-          this.workItemFormService.setFieldValue) {
-        console.log('Alternative service working');
+        
+        // If we got here, service is working
         await this.loadCurrentValue();
         this.render();
         VSS.notifyLoadSucceeded();
         return;
+        
+      } catch (error) {
+        console.log('VSS.require method not available or failed');
       }
-    } catch (error) {
-      console.log('VSS.require method failed:', error);
-    }
-    
-    try {
-      // Method 2: Try getting the service with different service IDs
-      const serviceIds = [
-        'ms.vss-work-web.work-item-form',
-        'ms.vss-work-web.work-item-form-service'
-      ];
-      
-      for (const serviceId of serviceIds) {
-        try {
-          console.log('Trying service ID:', serviceId);
-          this.workItemFormService = await VSS.getService(serviceId);
-          
-          if (this.workItemFormService && 
-              this.workItemFormService.getFieldValue && 
-              this.workItemFormService.setFieldValue) {
-            console.log('Service obtained with ID:', serviceId);
-            await this.loadCurrentValue();
-            this.render();
-            VSS.notifyLoadSucceeded();
-            return;
-          }
-        } catch (error) {
-          console.log('Service ID failed:', serviceId, error);
-        }
-      }
-    } catch (error) {
-      console.log('Alternative service IDs failed:', error);
+    } else {
+      console.log('VSS.require method not available (expected in this environment)');
     }
     
     // If all methods fail, show error but still render in demo mode
     console.log('All service methods failed, rendering in demo mode');
     this.renderError('Could not connect to work item service. Extension running in demo mode.');
     this.render();
-    VSS.notifyLoadFailed(new Error('All work item form service methods failed'));
+    VSS.notifyLoadSucceeded(); // Still notify success to prevent infinite loading
   }
 
   private initializeFallback(): void {
