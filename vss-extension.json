@@ -1,11 +1,11 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
-  "publisher": "your-publisher",
+  "publisher": "PDETs-test1",
   "categories": ["Azure Boards"],
   "targets": [
     {
@@ -13,7 +13,7 @@
     }
   ],
   "icons": {
-    "default": "images/README.md"
+    "default": "images/logo.png"
   },
   "contributions": [
     {
