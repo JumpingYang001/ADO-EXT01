@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:;">
     <title>Cascading Multi-Select Control</title>
     <style>
         body {
@@ -31,7 +32,7 @@
             border: 1px solid #d1d1d1;
             border-radius: 4px;
             padding: 8px;
-            max-height: 200px;
+            max-height: 180px;
             overflow-y: auto;
         }
 
@@ -106,16 +107,18 @@
 
         .selected-values {
             margin-top: 12px;
-            padding: 8px;
-            background: #f3f2f1;
-            border-radius: 4px;
+            padding: 12px;
+            background: #e6f7ff;
+            border: 2px solid #0078d4;
+            border-radius: 6px;
+            min-height: 60px;
         }
 
         .selected-title {
-            font-size: 12px;
+            font-size: 14px;
             font-weight: 600;
-            color: #323130;
-            margin-bottom: 6px;
+            color: #0078d4;
+            margin-bottom: 8px;
         }
 
         .selected-list {
@@ -175,8 +178,49 @@
 </head>
 <body>
     <div id="cascading-multiselect-container"></div>
+        
+    <!-- Load local VSS SDK - following the pattern of working extensions -->
+    <script src="VSS.SDK.min.js"></script>
     
-    <!-- Azure DevOps Extension SDK -->
-    <script src="https://dev.azure.com/mseng/_apis/public/gallery/extensionSDK/3.0.0/SDK.js"></script>
+    <script>
+        console.log('=== Azure DevOps Extension Environment ===');
+        console.log('VSS available:', typeof VSS !== 'undefined');
+        console.log('Location:', window.location.href);
+        console.log('Parent available:', window.parent !== window);
+        console.log('User agent:', navigator.userAgent);
+        
+        // Initialize extension following the working pattern
+        function initializeExtension() {
+            console.log('Starting extension initialization...');
+            
+            if (typeof VSS !== 'undefined') {
+                console.log('VSS found, initializing...');
+                
+                VSS.init({
+                    explicitNotifyLoaded: true,
+                    usePlatformStyles: true,
+                    applyTheme: true
+                });
+                
+                VSS.ready(function() {
+                    console.log('VSS framework is ready');
+                    console.log('VSS version:', VSS.getVersion ? VSS.getVersion() : 'unknown');
+                    console.log('Web context:', VSS.getWebContext ? VSS.getWebContext() : 'unavailable');
+                    
+                    window.VSSReady = true;
+                    
+                    // Fire a custom event to let the main code know VSS is ready
+                    const event = new CustomEvent('vssReady');
+                    window.dispatchEvent(event);
+                });
+            } else {
+                console.log('VSS not available, waiting...');
+                setTimeout(initializeExtension, 100);
+            }
+        }
+        
+        // Start initialization after a short delay to ensure DOM is ready
+        setTimeout(initializeExtension, 50);
+    </script>
 </body>
 </html>

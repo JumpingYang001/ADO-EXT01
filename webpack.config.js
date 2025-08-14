@@ -1,5 +1,6 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
 
 module.exports = (env, argv) => {
   const isDevelopment = argv.mode === 'development';
@@ -32,12 +33,18 @@ module.exports = (env, argv) => {
       new HtmlWebpackPlugin({
         template: './src/CascadingMultiSelect.html',
         filename: 'CascadingMultiSelect.html',
-        inject: 'body'
+        inject: 'body',
+        scriptLoading: 'blocking'
+      }),
+      new CopyWebpackPlugin({
+        patterns: [
+          {
+            from: 'src/VSS.SDK.min.js',
+            to: 'VSS.SDK.min.js'
+          }
+        ]
       })
-    ],
-    externals: {
-      'azure-devops-extension-sdk': 'SDK',
-      'azure-devops-extension-api': 'API'
-    }
+    ]
+    // Removed externals since we're not using SDK imports anymore
   };
 };

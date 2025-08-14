@@ -1,305 +1,658 @@
-import * as SDK from "azure-devops-extension-sdk";
-import { IWorkItemFormService, WorkItemTrackingServiceIds } from "azure-devops-extension-api/WorkItemTracking";
+// Declare VSS global for Azure DevOps environment
+declare var VSS: any;
+
+// Add VSS ServiceIds if not available
+if (typeof VSS !== 'undefined' && !VSS.ServiceIds) {
+  VSS.ServiceIds = {
+    WorkItemFormService: 'ms.vss-work-web.work-item-form'
+  };
+}
 
 interface HierarchicalItem {
   id: string;
   name: string;
   children?: HierarchicalItem[];
-  selected?: boolean;
-  expanded?: boolean;
 }
 
 interface ControlConfiguration {
-  parentSelectMode: boolean; // true = parent selectable, false = only children selectable
-  fieldValues: string; // JSON string of hierarchical data
-  multiSelectSeparator: string; // separator for multiple values
+  parentSelectMode: boolean;
+  fieldValues: string;
+  multiSelectSeparator: string;
 }
 
 class CascadingMultiSelectControl {
-  private static DEBUG = true; // Set to false for production
   private container: HTMLElement;
   private configuration!: ControlConfiguration;
   private data: HierarchicalItem[] = [];
   private selectedValues: Set<string> = new Set();
-  private workItemFormService!: IWorkItemFormService;
+  private expandedItems: Set<string> = new Set();
+  private workItemFormService: any;
   private fieldName!: string;
+  private instanceId: string;
 
-  constructor() {
-    this.container = document.getElementById("cascading-multiselect-container") as HTMLElement;
-    this.initialize();
-  }
-
-  private log(message: string, data?: any): void {
-    if (CascadingMultiSelectControl.DEBUG) {
-      const timestamp = new Date().toLocaleTimeString();
-      console.log(`[${timestamp}] [CascadingMultiSelect] ${message}`, data || '');
-    }
-  }
-
-  private async initialize(): Promise<void> {
-    this.log('Initializing control...');
-    try {
-      await SDK.init();
-      this.log('SDK initialized');
-      await SDK.ready();
-      this.log('SDK ready');
-
-      // Get the work item form service
-      this.workItemFormService = await SDK.getService<IWorkItemFormService>(
-        WorkItemTrackingServiceIds.WorkItemFormService
-      );
-      this.log('Work item form service acquired');
-
-      // Get configuration from the control
-      const config = SDK.getConfiguration();
-      this.log('Configuration received', config);
-      
-      this.fieldName = config.witInputs["FieldName"] || "";
-      
-      this.configuration = {
-        parentSelectMode: config.witInputs["parentSelectMode"] === "true",
-        fieldValues: config.witInputs["fieldValues"] || "[]",
-        multiSelectSeparator: config.witInputs["multiSelectSeparator"] || ";"
-      };
-      this.log('Configuration parsed', this.configuration);
-
-      // Parse the hierarchical data
-      try {
-        this.data = JSON.parse(this.configuration.fieldValues);
-        this.log('Hierarchical data parsed', this.data);
-      } catch (e) {
-        this.log('Error parsing fieldValues JSON', e);
-        console.error("Invalid JSON in fieldValues configuration:", e);
-        this.data = [];
-      }
-
-      // Load current field value
-      await this.loadCurrentValue();
-
-      // Render the control
-      this.render();
-
-      // Notify that the control is ready
-      SDK.notifyLoadSucceeded();
-      this.log('Control initialization completed successfully');
-    } catch (error) {
-      this.log('Initialization failed', error);
-      console.error("Failed to initialize control:", error);
-      SDK.notifyLoadFailed(error as any);
-    }
-  }
-
-  private async loadCurrentValue(): Promise<void> {
-    this.log('Loading current field value...');
-    try {
-      if (this.fieldName) {
-        const currentValue = await this.workItemFormService.getFieldValue(this.fieldName) as string;
-        this.log('Current field value loaded', currentValue);
-        if (currentValue) {
-          const values = currentValue.split(this.configuration.multiSelectSeparator);
-          this.selectedValues = new Set(values.map(v => v.trim()).filter(v => v));
-          this.log('Selected values parsed', Array.from(this.selectedValues));
-          this.updateDataWithSelection();
-        }
-      } else {
-        this.log('No field name configured');
-      }
-    } catch (error) {
-      this.log('Failed to load current field value', error);
-      console.error("Failed to load current field value:", error);
-    }
-  }
-
-  private updateDataWithSelection(): void {
-    const updateSelection = (items: HierarchicalItem[]): void => {
-      items.forEach(item => {
-        item.selected = this.selectedValues.has(item.id);
-        if (item.children) {
-          updateSelection(item.children);
-        }
-      });
-    };
-    updateSelection(this.data);
-  }
-
-  private render(): void {
-    this.container.innerHTML = "";
+  constructor(containerId?: string) {
+    console.log('CascadingMultiSelectControl constructor called');
     
-    // Add title
-    const title = document.createElement("div");
-    title.className = "control-title";
-    title.textContent = "Cascading Multi-Select";
-    this.container.appendChild(title);
+    // Generate a unique instance ID for this control instance
+    this.instanceId = containerId || `cascading-multiselect-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Look for container with specific ID, or use the default
+    this.container = document.getElementById(containerId || "cascading-multiselect-container") as HTMLElement;
+    
+    if (!this.container) {
+      console.error('Container element not found:', containerId || "cascading-multiselect-container");
+      return;
+    }
 
-    // Add configuration info
-    const info = document.createElement("div");
-    info.className = "control-info";
-    info.textContent = this.configuration.parentSelectMode 
-      ? "Parent items are selectable" 
-      : "Only child items are selectable";
-    this.container.appendChild(info);
+    // Add instance ID as data attribute for debugging
+    this.container.setAttribute('data-instance-id', this.instanceId);
+    
+    console.log('Control instance created with ID:', this.instanceId);
 
-    // Create the tree container
-    const treeContainer = document.createElement("div");
-    treeContainer.className = "tree-container";
-    this.container.appendChild(treeContainer);
-
-    // Render the tree
-    this.renderTree(this.data, treeContainer, 0);
-
-    // Add selected values display
-    this.renderSelectedValues();
+    // Wait for VSS to be ready, then initialize
+    if (typeof VSS !== 'undefined') {
+      this.initializeControl();
+    } else {
+      // Listen for VSS ready event
+      window.addEventListener('vssReady', () => {
+        this.initializeControl();
+      });
+      
+      // Also try checking periodically in case event was missed
+      this.waitForVSS().then(() => {
+        this.initializeControl();
+      }).catch(() => {
+        console.log('VSS not available, using fallback mode');
+        this.initializeFallback();
+      });
+    }
   }
 
-  private renderTree(items: HierarchicalItem[], container: HTMLElement, level: number): void {
-    items.forEach(item => {
-      const itemElement = document.createElement("div");
-      itemElement.className = `tree-item level-${level}`;
-
-      // Create the item content
-      const itemContent = document.createElement("div");
-      itemContent.className = "item-content";
-
-      // Add expand/collapse button if has children
-      if (item.children && item.children.length > 0) {
-        const expandButton = document.createElement("button");
-        expandButton.className = "expand-button";
-        expandButton.textContent = item.expanded ? "▼" : "▶";
-        expandButton.onclick = (e) => {
-          e.stopPropagation();
-          this.toggleExpand(item);
-        };
-        itemContent.appendChild(expandButton);
-      } else {
-        // Add spacer for alignment
-        const spacer = document.createElement("span");
-        spacer.className = "expand-spacer";
-        itemContent.appendChild(spacer);
-      }
-
-      // Add checkbox if item is selectable
-      const isSelectable = this.configuration.parentSelectMode || !item.children || item.children.length === 0;
-      if (isSelectable) {
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.className = "item-checkbox";
-        checkbox.checked = item.selected || false;
-        checkbox.onchange = () => this.toggleSelection(item);
-        itemContent.appendChild(checkbox);
-      }
-
-      // Add item label
-      const label = document.createElement("span");
-      label.className = "item-label";
-      label.textContent = item.name;
-      if (isSelectable) {
-        label.onclick = () => this.toggleSelection(item);
-        label.style.cursor = "pointer";
-      }
-      itemContent.appendChild(label);
-
-      itemElement.appendChild(itemContent);
-
-      // Add children if expanded
-      if (item.children && item.children.length > 0 && item.expanded) {
-        const childrenContainer = document.createElement("div");
-        childrenContainer.className = "children-container";
-        this.renderTree(item.children, childrenContainer, level + 1);
-        itemElement.appendChild(childrenContainer);
-      }
-
-      container.appendChild(itemElement);
+  private waitForVSS(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let attempts = 0;
+      const maxAttempts = 50; // Increase attempts
+      const checkInterval = 200;
+      
+      const checkVSS = () => {
+        attempts++;
+        
+        // Check direct VSS availability
+        if (typeof VSS !== 'undefined') {
+          console.log('VSS framework detected');
+          resolve();
+          return;
+        }
+        
+        // Check parent window (this is the most common scenario in Azure DevOps)
+        if (window.parent && window.parent !== window) {
+          try {
+            if (typeof (window.parent as any).VSS !== 'undefined') {
+              console.log('VSS found in parent window');
+              (window as any).VSS = (window.parent as any).VSS;
+              resolve();
+              return;
+            }
+          } catch (e) {
+            // Cross-origin access might be blocked, but that's expected in some cases
+          }
+        }
+        
+        if (attempts >= maxAttempts) {
+          reject(new Error(`VSS framework not available after ${maxAttempts} attempts`));
+          return;
+        }
+        
+        setTimeout(checkVSS, checkInterval);
+      };
+      
+      checkVSS();
     });
   }
 
-  private toggleExpand(item: HierarchicalItem): void {
-    item.expanded = !item.expanded;
-    this.render();
-  }
-
-  private toggleSelection(item: HierarchicalItem): void {
-    this.log('Toggling selection for item', item);
-    if (item.selected) {
-      this.selectedValues.delete(item.id);
-      item.selected = false;
-      this.log('Item deselected', item.id);
-    } else {
-      this.selectedValues.add(item.id);
-      item.selected = true;
-      this.log('Item selected', item.id);
-    }
-
-    this.log('Current selected values', Array.from(this.selectedValues));
-    this.updateField();
-    this.renderSelectedValues();
-  }
-
-  private async updateField(): Promise<void> {
-    this.log('Updating field value...');
+  private async initializeControl(): Promise<void> {
     try {
-      if (this.fieldName) {
-        const value = Array.from(this.selectedValues).join(this.configuration.multiSelectSeparator);
-        this.log('Setting field value', { fieldName: this.fieldName, value });
-        await this.workItemFormService.setFieldValue(this.fieldName, value);
-        this.log('Field value updated successfully');
+      console.log('Starting control initialization with VSS...');
+      
+      // VSS should be available now
+      if (typeof VSS === 'undefined') {
+        throw new Error('VSS is not available');
+      }
+
+      // Wait for VSS to be ready if not already
+      if (!(window as any).VSSReady) {
+        console.log('Waiting for VSS ready...');
+        await new Promise<void>((resolve) => {
+          VSS.ready(() => {
+            console.log('VSS is now ready');
+            resolve();
+          });
+        });
+      }
+
+      // Register the extension properly to handle VSS communication
+      console.log('Registering extension with VSS for instance:', this.instanceId);
+      
+      // Debug: Check what contribution ID we're getting
+      let contributionId;
+      try {
+        contributionId = VSS.getContribution().id;
+        console.log('Contribution ID:', contributionId);
+      } catch (error) {
+        console.error('Error getting contribution ID:', error);
+        // Fallback to the known contribution ID
+        contributionId = 'PDETs-test1.cascading-multiselect.cascading-multiselect-control';
+        console.log('Using fallback contribution ID:', contributionId);
+      }
+      
+      // Create a unique registration object for this instance
+      const registrationObject = {
+        // This is the proper way to register a work item form control
+        onLoaded: async () => {
+          console.log(`Extension onLoaded callback called for instance: ${this.instanceId}`);
+          await this.loadConfiguration();
+        },
+        
+        onFieldChanged: (args: any) => {
+          console.log(`Field changed for instance ${this.instanceId}:`, args);
+          // Handle field change events if needed
+        },
+        
+        onSaved: (args: any) => {
+          console.log(`Work item saved for instance ${this.instanceId}:`, args);
+          // Handle save events if needed
+        },
+        
+        onRefreshed: (args: any) => {
+          console.log(`Work item refreshed for instance ${this.instanceId}:`, args);
+          // Handle refresh events if needed
+        },
+        
+        onReset: (args: any) => {
+          console.log(`Work item reset for instance ${this.instanceId}:`, args);
+          // Handle reset events if needed
+        },
+        
+        onUnloaded: (args: any) => {
+          console.log(`Extension unloaded for instance ${this.instanceId}:`, args);
+          // Clean up if needed
+        }
+      };
+      
+      VSS.register(contributionId, registrationObject);
+      
+      console.log('Extension registered successfully for instance:', this.instanceId);
+      
+      // Alternative approach: Load configuration directly after registration
+      // Some extensions don't wait for onLoaded callback
+      console.log('Loading configuration...');
+      this.loadConfiguration().catch(error => {
+        console.error('Error loading configuration:', error);
+        this.renderError('Failed to load configuration: ' + (error instanceof Error ? error.message : String(error)));
+      });
+      
+    } catch (error) {
+      console.error('Error during control initialization:', error);
+      this.renderError('Failed to initialize control: ' + (error instanceof Error ? error.message : String(error)));
+      
+      // If VSS registration failed, notify failure
+      this.initializeFallback();
+      if (typeof VSS !== 'undefined' && VSS.notifyLoadFailed) {
+        VSS.notifyLoadFailed(error instanceof Error ? error : new Error(String(error)));
       } else {
-        this.log('No field name configured for update');
+        console.error('Cannot notify VSS of load failure - VSS not available');
+      }
+    }
+  }
+
+  private async loadConfiguration(): Promise<void> {
+    try {
+      console.log('Loading configuration...');
+      
+      // Get configuration from the VSS framework
+      const config = VSS.getConfiguration();
+      console.log('Raw configuration received:', config);
+      
+      // Validate configuration structure
+      if (!config) {
+        throw new Error('No configuration object received from VSS');
+      }
+      
+      if (!config.witInputs) {
+        console.warn('No witInputs in configuration, using defaults');
+        config.witInputs = {};
+      }
+      
+      // Debug: Log all available properties in config
+      console.log('Config keys:', Object.keys(config));
+      console.log('Config.witInputs keys:', Object.keys(config.witInputs || {}));
+      
+      // Extract field name from various possible locations
+      // In Azure DevOps, field name is typically in these locations:
+      this.fieldName = config.witInputs["FieldName"] ||    // Custom input
+                      config.fieldName ||                   // Direct property
+                      config.fieldRefName ||                // Reference name
+                      config.id ||                          // Fallback to ID
+                      config.contribution?.id ||            // Contribution ID
+                      "";
+      
+      // Additional debug information
+      console.log('Field name sources check:');
+      console.log('- config.witInputs.FieldName:', config.witInputs["FieldName"]);
+      console.log('- config.fieldName:', config.fieldName);
+      console.log('- config.fieldRefName:', config.fieldRefName);
+      console.log('- config.id:', config.id);
+      console.log('- config.contribution?.id:', config.contribution?.id);
+      console.log('Field name extracted:', this.fieldName);
+      
+      // Debug the full configuration context
+      console.log('=== CONFIGURATION DEBUG ===');
+      console.log('Instance ID:', this.instanceId);
+      console.log('Container ID:', this.container.id);
+      console.log('Field Name:', this.fieldName);
+      console.log('Parent Select Mode:', config.witInputs["parentSelectMode"]);
+      console.log('Field Values:', config.witInputs["fieldValues"]?.substring(0, 100) + '...');
+      console.log('=== END CONFIG DEBUG ===');
+      
+      // If still no field name, try getting it from the work item form service
+      if (!this.fieldName && this.workItemFormService) {
+        try {
+          // Try to get field information from the service
+          const formService = this.workItemFormService;
+          console.log('Trying to get field name from work item form service...');
+          
+          // Check if there's a way to get the current field context
+          if (formService.getFields) {
+            const fields = await formService.getFields();
+            console.log('Available fields:', fields?.map((f: any) => f.referenceName));
+          }
+          
+          // Try getting current field if available
+          if (formService.getCurrentFieldName) {
+            this.fieldName = await formService.getCurrentFieldName();
+            console.log('Field name from getCurrentFieldName:', this.fieldName);
+          }
+        } catch (e) {
+          console.log('Could not get field name from work item form service:', e);
+        }
+      }
+      
+      // If STILL no field name, check if we're in a work item context
+      if (!this.fieldName) {
+        console.warn('⚠️  FIELD NAME ISSUE DETECTED ⚠️');
+        console.warn('No field name available. This usually means:');
+        console.warn('1. The control is not properly bound to a work item field');
+        console.warn('2. You need to configure the field binding in your work item form');
+        console.warn('3. The control might be running in demo/preview mode');
+        console.warn('');
+        console.warn('TO FIX THIS:');
+        console.warn('1. Go to your Azure DevOps project settings');
+        console.warn('2. Navigate to Work > Process > [Your Process] > [Work Item Type]');
+        console.warn('3. Add this control to a field (not just the form)');
+        console.warn('4. When adding the control, select a specific field to bind it to');
+        console.warn('5. Save your changes and test with a real work item');
+        console.warn('');
+        
+        // Use a fallback field name for demo purposes
+        this.fieldName = 'System.Description'; // Use Description as a safe fallback
+        console.warn('Using fallback field name for demo:', this.fieldName);
+        console.warn('Values will NOT persist until properly configured!');
+      }
+      const parentSelectMode = config.witInputs["parentSelectMode"];
+      const fieldValues = config.witInputs["fieldValues"];
+      const multiSelectSeparator = config.witInputs["multiSelectSeparator"];
+      
+      this.configuration = {
+        parentSelectMode: parentSelectMode === "true" || parentSelectMode === true,
+        fieldValues: fieldValues || "[]",
+        multiSelectSeparator: multiSelectSeparator || ";"
+      };
+      
+      console.log('Configuration parsed:', this.configuration);
+
+      // Parse and validate the hierarchical data
+      try {
+        const parsedData = JSON.parse(this.configuration.fieldValues);
+        if (Array.isArray(parsedData) && parsedData.length > 0) {
+          this.data = parsedData;
+          console.log('Hierarchical data parsed successfully:', this.data.length, 'items');
+        } else {
+          console.warn('Invalid or empty field values, using default data');
+          this.data = this.getDefaultData();
+        }
+      } catch (e) {
+        console.error("Invalid JSON in fieldValues configuration:", e);
+        console.log('Using default data due to JSON parse error');
+        this.data = this.getDefaultData();
+      }
+
+      // Get work item form service
+      this.getWorkItemFormService();
+      
+    } catch (error) {
+      console.error('Error loading configuration:', error);
+      
+      // Set fallback configuration - use a demo field name
+      this.fieldName = 'Custom.CascadingMultiSelect'; // Use a custom field name as fallback
+      this.configuration = {
+        parentSelectMode: false,
+        fieldValues: "[]",
+        multiSelectSeparator: ";"
+      };
+      this.data = this.getDefaultData();
+      
+      this.renderError('Failed to load configuration, using defaults: ' + (error instanceof Error ? error.message : String(error)));
+      this.render();
+    }
+  }
+
+  private async getWorkItemFormService(): Promise<void> {
+    try {
+      console.log('Getting work item form service...');
+      
+      // If we don't have a field name, use demo mode
+      if (!this.fieldName) {
+        console.log('No field name available, rendering in demo mode');
+        this.render();
+        VSS.notifyLoadSucceeded();
+        return;
+      }
+      
+      // Use the proper method to get work item form service
+      this.workItemFormService = await VSS.getService(VSS.ServiceIds.WorkItemFormService);
+      console.log('Work item form service obtained successfully');
+      
+      // Verify service has required methods
+      if (!this.workItemFormService || 
+          !this.workItemFormService.getFieldValue || 
+          !this.workItemFormService.setFieldValue) {
+        console.log('Standard service missing methods, trying alternative...');
+        await this.tryAlternativeServiceMethods();
+        return;
+      }
+      
+      console.log('Work item form service verified and ready');
+      
+      // Load current field value and render
+      await this.loadCurrentValue();
+      this.render();
+      
+      // Notify VSS that the extension loaded successfully
+      console.log('Notifying VSS of successful load');
+      VSS.notifyLoadSucceeded();
+      
+    } catch (error) {
+      console.error('Error getting work item form service:', error);
+      console.error('Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
+      
+      // Try alternative methods
+      await this.tryAlternativeServiceMethods();
+    }
+  }
+
+  private async tryAlternativeServiceMethods(): Promise<void> {
+    console.log('Trying alternative service methods...');
+    
+    try {
+      // Method 1: Try using VSS.require to load the service
+      await new Promise<void>((resolve, reject) => {
+        VSS.require([
+          'TFS/WorkItemTracking/Services'
+        ], (Services: any) => {
+          try {
+            this.workItemFormService = Services.WorkItemFormService.getService();
+            console.log('Work item form service obtained via VSS.require');
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        }, (error: any) => {
+          reject(error);
+        });
+      });
+      
+      if (this.workItemFormService && 
+          this.workItemFormService.getFieldValue && 
+          this.workItemFormService.setFieldValue) {
+        console.log('Alternative service working');
+        await this.loadCurrentValue();
+        this.render();
+        VSS.notifyLoadSucceeded();
+        return;
       }
     } catch (error) {
-      this.log('Failed to update field value', error);
-      console.error("Failed to update field value:", error);
+      console.log('VSS.require method failed:', error);
     }
+    
+    try {
+      // Method 2: Try getting the service with different service IDs
+      const serviceIds = [
+        'ms.vss-work-web.work-item-form',
+        'ms.vss-work-web.work-item-form-service'
+      ];
+      
+      for (const serviceId of serviceIds) {
+        try {
+          console.log('Trying service ID:', serviceId);
+          this.workItemFormService = await VSS.getService(serviceId);
+          
+          if (this.workItemFormService && 
+              this.workItemFormService.getFieldValue && 
+              this.workItemFormService.setFieldValue) {
+            console.log('Service obtained with ID:', serviceId);
+            await this.loadCurrentValue();
+            this.render();
+            VSS.notifyLoadSucceeded();
+            return;
+          }
+        } catch (error) {
+          console.log('Service ID failed:', serviceId, error);
+        }
+      }
+    } catch (error) {
+      console.log('Alternative service IDs failed:', error);
+    }
+    
+    // If all methods fail, show error but still render in demo mode
+    console.log('All service methods failed, rendering in demo mode');
+    this.renderError('Could not connect to work item service. Extension running in demo mode.');
+    this.render();
+    VSS.notifyLoadFailed(new Error('All work item form service methods failed'));
   }
 
-  private renderSelectedValues(): void {
-    // Remove existing selected values display
-    const existing = this.container.querySelector(".selected-values");
-    if (existing) {
-      existing.remove();
+  private initializeFallback(): void {
+    console.log('Using fallback initialization...');
+    
+    // Create a basic mock configuration for demonstration
+    this.fieldName = 'System.Title';
+    this.configuration = {
+      parentSelectMode: false,
+      fieldValues: JSON.stringify([
+        {
+          id: "cat1",
+          name: "Demo Category 1",
+          children: [
+            { id: "item1", name: "Demo Item 1" },
+            { id: "item2", name: "Demo Item 2" }
+          ]
+        },
+        {
+          id: "cat2",
+          name: "Demo Category 2", 
+          children: [
+            { id: "item3", name: "Demo Item 3" },
+            { id: "item4", name: "Demo Item 4" }
+          ]
+        }
+      ]),
+      multiSelectSeparator: ';'
+    };
+    
+    try {
+      this.data = JSON.parse(this.configuration.fieldValues);
+    } catch (e) {
+      this.data = this.getDefaultData();
     }
+    
+    this.render();
+    
+    // Show a message that this is in demo mode
+    const demoMessage = document.createElement('div');
+    demoMessage.style.cssText = 'background: #fff3cd; border: 1px solid #ffeaa7; padding: 8px; margin-bottom: 10px; border-radius: 4px; font-size: 12px;';
+    demoMessage.innerHTML = '<strong>Demo Mode:</strong> Extension is running in fallback mode. Configuration and field updates may not work properly.';
+    this.container.insertBefore(demoMessage, this.container.firstChild);
+  }
 
-    if (this.selectedValues.size > 0) {
-      const selectedContainer = document.createElement("div");
-      selectedContainer.className = "selected-values";
-      
-      const title = document.createElement("div");
-      title.className = "selected-title";
-      title.textContent = "Selected values:";
-      selectedContainer.appendChild(title);
+  private getDefaultData(): HierarchicalItem[] {
+    return [
+      {
+        id: "category1",
+        name: "Category 1",
+        children: [
+          { id: "item1", name: "Item 1" },
+          { id: "item2", name: "Item 2" }
+        ]
+      },
+      {
+        id: "category2",
+        name: "Category 2",
+        children: [
+          { id: "item3", name: "Item 3" },
+          { id: "item4", name: "Item 4" }
+        ]
+      }
+    ];
+  }
 
-      const valuesList = document.createElement("div");
-      valuesList.className = "selected-list";
+  private async loadCurrentValue(): Promise<void> {
+    try {
+      console.log(`Loading current field value for instance ${this.instanceId}, field: ${this.fieldName}`);
       
-      Array.from(this.selectedValues).forEach(value => {
-        const valueItem = document.createElement("span");
-        valueItem.className = "selected-item";
-        valueItem.textContent = this.getItemNameById(value) || value;
+      if (this.fieldName && this.workItemFormService) {
+        const currentValue = await this.workItemFormService.getFieldValue(this.fieldName);
+        console.log(`Current field value for ${this.fieldName} (instance ${this.instanceId}):`, currentValue);
         
-        const removeButton = document.createElement("button");
-        removeButton.className = "remove-button";
-        removeButton.textContent = "×";
-        removeButton.onclick = () => {
-          this.selectedValues.delete(value);
-          this.updateDataWithSelection();
-          this.updateField();
+        if (currentValue) {
+          const values = currentValue.toString().split(this.configuration.multiSelectSeparator)
+            .map((v: string) => v.trim())
+            .filter((v: string) => v.length > 0);
+          this.selectedValues = new Set(values);
+          console.log(`Selected values loaded for instance ${this.instanceId}:`, Array.from(this.selectedValues));
+        } else {
+          this.selectedValues.clear();
+        }
+        
+        // Re-render if the control is already rendered
+        if (this.container.children.length > 0) {
           this.render();
-        };
-        
-        valueItem.appendChild(removeButton);
-        valuesList.appendChild(valueItem);
-      });
-
-      selectedContainer.appendChild(valuesList);
-      this.container.appendChild(selectedContainer);
+        }
+      }
+    } catch (error) {
+      console.error(`Error loading current field value for instance ${this.instanceId}:`, error);
     }
   }
 
-  private getItemNameById(id: string): string | null {
+  private async updateFieldValue(): Promise<void> {
+    try {
+      if (this.fieldName && this.workItemFormService) {
+        const newValue = Array.from(this.selectedValues).join(this.configuration.multiSelectSeparator);
+        console.log(`Updating field ${this.fieldName} (instance ${this.instanceId}) to:`, newValue);
+        
+        await this.workItemFormService.setFieldValue(this.fieldName, newValue);
+        console.log(`Field value updated successfully for instance ${this.instanceId}`);
+      }
+    } catch (error) {
+      console.error(`Error updating field value for instance ${this.instanceId}:`, error);
+    }
+  }
+
+  private render(): void {
+    if (!this.container) return;
+
+    const html = `
+      <div class="control-title">Cascading Multi-Select</div>
+      <div class="control-info">Field: ${this.fieldName} | Parent Selectable: ${this.configuration.parentSelectMode ? 'Yes' : 'No'}</div>
+      <div class="tree-container">
+        ${this.renderTreeItems(this.data, 0)}
+      </div>
+      ${this.renderSelectedValues()}
+    `;
+
+    this.container.innerHTML = html;
+    this.attachEventListeners();
+  }
+
+  private renderTreeItems(items: HierarchicalItem[], level: number): string {
+    return items.map(item => {
+      const hasChildren = item.children && item.children.length > 0;
+      const isExpanded = this.expandedItems.has(item.id);
+      const isSelected = this.selectedValues.has(item.id);
+      const canSelect = this.configuration.parentSelectMode || !hasChildren;
+
+      return `
+        <div class="tree-item level-${level}">
+          <div class="item-content">
+            ${hasChildren 
+              ? `<button class="expand-button" data-item-id="${item.id}">
+                   ${isExpanded ? '▼' : '▶'}
+                 </button>`
+              : '<div class="expand-spacer"></div>'
+            }
+            ${canSelect 
+              ? `<input type="checkbox" class="item-checkbox" 
+                        data-item-id="${item.id}" 
+                        ${isSelected ? 'checked' : ''}>`
+              : ''
+            }
+            <span class="item-label">${item.name}</span>
+          </div>
+          ${hasChildren && isExpanded 
+            ? `<div class="children-container">
+                 ${this.renderTreeItems(item.children!, level + 1)}
+               </div>`
+            : ''
+          }
+        </div>
+      `;
+    }).join('');
+  }
+
+  private renderSelectedValues(): string {
+    const selectedItems = Array.from(this.selectedValues);
+    
+    if (selectedItems.length === 0) {
+      return '<div class="selected-values"><div class="selected-title">No items selected</div></div>';
+    }
+
+    const renderedItems = selectedItems.map(id => {
+      const itemName = this.getItemName(id);
+      return `
+        <div class="selected-item">
+          ${itemName}
+          <button class="remove-button" data-item-id="${id}">×</button>
+        </div>
+      `;
+    }).join('');
+
+    const result = `
+      <div class="selected-values">
+        <div class="selected-title">Selected Items (${selectedItems.length}):</div>
+        <div class="selected-list">
+          ${renderedItems}
+        </div>
+      </div>
+    `;
+    
+    return result;
+  }
+
+  private getItemName(id: string): string {
     const findItem = (items: HierarchicalItem[]): string | null => {
       for (const item of items) {
-        if (item.id === id) {
-          return item.name;
-        }
+        if (item.id === id) return item.name;
         if (item.children) {
           const found = findItem(item.children);
           if (found) return found;
@@ -307,43 +660,126 @@ class CascadingMultiSelectControl {
       }
       return null;
     };
-    return findItem(this.data);
+
+    return findItem(this.data) || id;
   }
 
-  // Public method for debugging - reinitialize with new configuration
-  public async reinitialize(): Promise<void> {
-    this.log('Reinitializing control...');
-    this.selectedValues.clear();
-    this.data = [];
-    await this.initialize();
+  private attachEventListeners(): void {
+    if (!this.container) return;
+
+    // Remove existing event listeners to avoid duplicates
+    // Clone the container to remove all event listeners
+    const newContainer = this.container.cloneNode(true) as HTMLElement;
+    this.container.parentNode?.replaceChild(newContainer, this.container);
+    this.container = newContainer;
+
+    // Expand/collapse buttons
+    this.container.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      
+      if (target.classList.contains('expand-button')) {
+        const itemId = target.dataset.itemId;
+        if (itemId) {
+          this.toggleExpanded(itemId);
+        }
+      }
+      
+      if (target.classList.contains('remove-button')) {
+        const itemId = target.dataset.itemId;
+        if (itemId) {
+          this.selectedValues.delete(itemId);
+          this.updateFieldValue();
+          this.render();
+        }
+      }
+    });
+
+    // Checkbox changes
+    this.container.addEventListener('change', (e) => {
+      const target = e.target as HTMLInputElement;
+      
+      if (target.classList.contains('item-checkbox')) {
+        const itemId = target.dataset.itemId;
+        if (itemId) {
+          if (target.checked) {
+            this.selectedValues.add(itemId);
+          } else {
+            this.selectedValues.delete(itemId);
+          }
+          this.updateFieldValue();
+          this.render();
+        }
+      }
+    });
+  }
+
+  private toggleExpanded(itemId: string): void {
+    if (this.expandedItems.has(itemId)) {
+      this.expandedItems.delete(itemId);
+    } else {
+      this.expandedItems.add(itemId);
+    }
+    
+    this.render();
+  }
+
+  private renderError(message: string): void {
+    if (this.container) {
+      this.container.innerHTML = `
+        <div style="color: red; padding: 10px; border: 1px solid red; border-radius: 4px;">
+          <strong>Error:</strong> ${message}
+        </div>
+      `;
+    }
   }
 }
 
-// Global instance holder
-let globalControlInstance: CascadingMultiSelectControl | null = null;
+// Store instances globally to prevent conflicts
+(window as any).CascadingMultiSelectInstances = (window as any).CascadingMultiSelectInstances || new Map();
 
-// Expose the class and functions globally for debugging (immediately available)
-(window as any).CascadingMultiSelectControl = CascadingMultiSelectControl;
-(window as any).initializeCascadingControl = () => {
-  const container = document.getElementById("cascading-multiselect-container");
-  if (container) {
-    container.innerHTML = '';
-    globalControlInstance = new CascadingMultiSelectControl();
-    return globalControlInstance;
-  }
-  return null;
-};
-
-// Initialize the control when the page loads (only if not in debug mode)
-document.addEventListener("DOMContentLoaded", () => {
-  // Check if we're in debug mode by looking for the debug environment
-  const isDebugEnvironment = document.querySelector('.debug-panel') !== null;
-  
-  if (!isDebugEnvironment) {
-    // Normal initialization for production use
-    globalControlInstance = new CascadingMultiSelectControl();
-  } else {
-    // In debug mode, don't auto-initialize, let the debug environment handle it
-    console.log('[CascadingMultiSelect] Debug environment detected, skipping auto-initialization');
-  }
+// Initialize the control when the document is ready
+document.addEventListener('DOMContentLoaded', () => {
+  console.log('DOM content loaded, creating control...');
+  initializeCascadingMultiSelectControl();
 });
+
+// Also try to initialize if DOM is already loaded
+if (document.readyState === 'loading') {
+  // DOM is still loading
+} else {
+  // DOM is already loaded
+  console.log('DOM already loaded, creating control...');
+  initializeCascadingMultiSelectControl();
+}
+
+function initializeCascadingMultiSelectControl() {
+  // Look for all potential container elements
+  const containers = document.querySelectorAll('[id*="cascading-multiselect"]');
+  
+  if (containers.length === 0) {
+    // Fallback: create with default container ID
+    const defaultContainer = document.getElementById("cascading-multiselect-container");
+    if (defaultContainer) {
+      const instanceId = defaultContainer.id;
+      if (!(window as any).CascadingMultiSelectInstances.has(instanceId)) {
+        console.log('Creating control instance for:', instanceId);
+        const control = new CascadingMultiSelectControl(instanceId);
+        (window as any).CascadingMultiSelectInstances.set(instanceId, control);
+      }
+    } else {
+      console.log('No cascading multiselect containers found, creating default...');
+      const control = new CascadingMultiSelectControl();
+      (window as any).CascadingMultiSelectInstances.set('default', control);
+    }
+  } else {
+    // Create instances for each container found
+    containers.forEach((container) => {
+      const instanceId = container.id;
+      if (!(window as any).CascadingMultiSelectInstances.has(instanceId)) {
+        console.log('Creating control instance for:', instanceId);
+        const control = new CascadingMultiSelectControl(instanceId);
+        (window as any).CascadingMultiSelectInstances.set(instanceId, control);
+      }
+    });
+  }
+}

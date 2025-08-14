@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.1",
+  "version": "1.0.27",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -26,7 +26,9 @@
       "properties": {
         "name": "Cascading Multi-Select",
         "uri": "dist/CascadingMultiSelect.html",
-        "height": 300,
+        "height": 400,
+        "supportedDataTypes": ["String"],
+        "canSortBy": false,
         "inputs": [
           {
             "id": "parentSelectMode",
