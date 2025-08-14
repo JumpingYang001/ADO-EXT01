@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.27",
+  "version": "1.0.36",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -17,7 +17,7 @@
   },
   "contributions": [
     {
-      "id": "cascading-multiselect-control",
+      "id": "cascading-multiselect-control-v2",
       "type": "ms.vss-work-web.work-item-form-control",
       "description": "Cascading multi-selection control for work items",
       "targets": [
@@ -30,6 +30,19 @@
         "supportedDataTypes": ["String"],
         "canSortBy": false,
         "inputs": [
+          {
+            "id": "FieldName",
+            "name": "Field",
+            "description": "The field associated with the control.",
+            "type": "WorkItemField",
+            "properties": {
+              "workItemFieldTypes": ["String"]
+            },
+            "validation": {
+              "dataType": "String",
+              "isRequired": true
+            }
+          },
           {
             "id": "parentSelectMode",
             "name": "Parent Selection Mode",

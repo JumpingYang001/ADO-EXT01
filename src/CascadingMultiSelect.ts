@@ -44,6 +44,14 @@ class CascadingMultiSelectControl {
       return;
     }
 
+    // IMPORTANT: Assign a unique ID to this container if it doesn't have one or if it's the default
+    if (!this.container.id || this.container.id === "cascading-multiselect-container") {
+      const uniqueId = `cascading-multiselect-container-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      this.container.id = uniqueId;
+      this.instanceId = uniqueId;
+      console.log('Assigned unique container ID:', uniqueId);
+    }
+
     // Add instance ID as data attribute for debugging
     this.container.setAttribute('data-instance-id', this.instanceId);
     
@@ -141,7 +149,7 @@ class CascadingMultiSelectControl {
       } catch (error) {
         console.error('Error getting contribution ID:', error);
         // Fallback to the known contribution ID
-        contributionId = 'PDETs-test1.cascading-multiselect.cascading-multiselect-control';
+        contributionId = 'PDETs-test1.cascading-multiselect.cascading-multiselect-control-v2';
         console.log('Using fallback contribution ID:', contributionId);
       }
       
@@ -150,6 +158,31 @@ class CascadingMultiSelectControl {
         // This is the proper way to register a work item form control
         onLoaded: async () => {
           console.log(`Extension onLoaded callback called for instance: ${this.instanceId}`);
+          
+          // CRITICAL: Early check to prevent Rule Engine errors
+          try {
+            const config = VSS.getConfiguration();
+            const hasValidFieldBinding = config?.fieldName || 
+                                       config?.fieldRefName || 
+                                       config?.witInputs?.FieldName ||
+                                       config?.id;
+            
+            if (!hasValidFieldBinding) {
+              console.warn('⚠️ No valid field binding detected - skipping field operations');
+              console.warn('⚠️ Control will render but not interact with work item fields');
+              
+              // Set fieldName to empty to prevent all field operations
+              this.fieldName = "";
+              
+              // Load configuration without field operations
+              await this.loadConfiguration();
+              return;
+            }
+          } catch (error) {
+            console.error('Error during early field binding check:', error);
+            this.fieldName = "";
+          }
+          
           await this.loadConfiguration();
         },
         
@@ -293,10 +326,12 @@ class CascadingMultiSelectControl {
         console.warn('5. Save your changes and test with a real work item');
         console.warn('');
         
-        // Use a fallback field name for demo purposes
-        this.fieldName = 'System.Description'; // Use Description as a safe fallback
-        console.warn('Using fallback field name for demo:', this.fieldName);
-        console.warn('Values will NOT persist until properly configured!');
+        // IMPORTANT: Don't use synthetic field names as they cause Rule Engine errors
+        // Instead, set fieldName to empty to prevent any field operations
+        this.fieldName = "";
+        console.warn('⚠️ Field operations disabled until proper field binding');
+        console.warn('⚠️ Control will work but values will NOT persist');
+        console.warn('⚠️ This prevents Azure DevOps Rule Engine errors');
       }
       const parentSelectMode = config.witInputs["parentSelectMode"];
       const fieldValues = config.witInputs["fieldValues"];
@@ -326,14 +361,26 @@ class CascadingMultiSelectControl {
         this.data = this.getDefaultData();
       }
 
-      // Get work item form service
-      this.getWorkItemFormService();
+      // Get work item form service - only if we have a valid field name
+      if (this.fieldName) {
+        this.getWorkItemFormService();
+      } else {
+        console.warn('⚠️ Skipping work item form service initialization - no field name');
+        console.warn('⚠️ Control will work in demo mode without field persistence');
+        
+        // Still render the control but without field operations
+        this.render();
+        
+        // CRITICAL: Notify Azure DevOps that loading is complete even in demo mode
+        console.log('✅ Demo mode loading complete - notifying Azure DevOps');
+        VSS.notifyLoadSucceeded();
+      }
       
     } catch (error) {
       console.error('Error loading configuration:', error);
       
-      // Set fallback configuration - use a demo field name
-      this.fieldName = 'Custom.CascadingMultiSelect'; // Use a custom field name as fallback
+      // Set fallback configuration - DON'T use synthetic field names (causes Rule Engine errors)
+      this.fieldName = ""; // Empty field name prevents field operations and Rule Engine errors
       this.configuration = {
         parentSelectMode: false,
         fieldValues: "[]",
@@ -343,6 +390,10 @@ class CascadingMultiSelectControl {
       
       this.renderError('Failed to load configuration, using defaults: ' + (error instanceof Error ? error.message : String(error)));
       this.render();
+      
+      // CRITICAL: Notify Azure DevOps that loading is complete even in error mode
+      console.log('✅ Error mode loading complete - notifying Azure DevOps');
+      VSS.notifyLoadSucceeded();
     }
   }
 
