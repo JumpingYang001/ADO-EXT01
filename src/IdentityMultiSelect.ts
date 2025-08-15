@@ -207,7 +207,7 @@ class IdentityMultiSelectControl {
         if (!value) return;
 
         try {
-            // Parse separator-delimited identity values
+            // Parse configurable separator-delimited identity values (semicolon or comma)
             const identityStrings = value.split(/[;,]/).filter(s => s.trim());
             
             for (const identityString of identityStrings) {
@@ -449,54 +449,25 @@ class IdentityMultiSelectControl {
             console.log('Identity Multi-Select: Starting field update for:', this.fieldName);
             console.log('Identity Multi-Select: Selected identities:', this.selectedIdentities);
             
-            // Get the field info to determine the field type
-            const fieldInfo = await this.workItemFormService.getField(this.fieldName);
-            const fieldType = fieldInfo?.type?.toLowerCase();
-            console.log('Identity Multi-Select: Field type detected:', fieldType, 'Field info:', fieldInfo);
+            // SIMPLIFIED APPROACH: Always use string format with configurable separator
+            // This is the standard approach for Azure DevOps work item controls
+            // Supports both semicolon (default) and comma separators
             
-            let value: string | string[];
+            let value: string;
             
-            if (fieldType === 'identity') {
-                // For Identity fields, Azure DevOps expects different formats
-                // Try multiple formats to ensure compatibility
-                
-                if (this.selectedIdentities.length === 1) {
-                    // Single identity - use unique name directly
-                    value = this.selectedIdentities[0].uniqueName;
-                } else {
-                    // Multiple identities - try array format first, then string format
-                    const identityArray = this.selectedIdentities.map(identity => identity.uniqueName);
-                    
-                    try {
-                        // Try setting as array first (preferred for multi-identity)
-                        await this.workItemFormService.setFieldValue(this.fieldName, identityArray);
-                        console.log('Identity Multi-Select: Successfully set identity array:', identityArray);
-                        
-                        // Verify the change was accepted
-                        const verifyValue = await this.workItemFormService.getFieldValue(this.fieldName);
-                        console.log('Identity Multi-Select: Verification value:', verifyValue);
-                        
-                        this.notifyFieldChange(identityArray);
-                        return;
-                        
-                    } catch (arrayError) {
-                        console.log('Identity Multi-Select: Array format failed, trying string format:', arrayError);
-                        // Fall back to string format
-                        value = this.selectedIdentities
-                            .map(identity => identity.uniqueName)
-                            .join(this.separator === ',' ? ', ' : '; ');
-                    }
-                }
+            if (this.selectedIdentities.length === 0) {
+                value = '';
             } else {
-                // For String fields, use display name format
+                // Create configurable-separator string with identity format: "Display Name <email>"
+                const separatorString = this.separator === ',' ? ', ' : '; ';
                 value = this.selectedIdentities
                     .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                    .join(this.separator === ',' ? ', ' : '; ');
+                    .join(separatorString);
             }
 
             console.log('Identity Multi-Select: Setting field value:', value);
             
-            // Set the field value
+            // Set the field value using the standard method
             await this.workItemFormService.setFieldValue(this.fieldName, value);
             console.log('Identity Multi-Select: Field value set successfully');
             
@@ -504,57 +475,13 @@ class IdentityMultiSelectControl {
             const verifyValue = await this.workItemFormService.getFieldValue(this.fieldName);
             console.log('Identity Multi-Select: Verification - field now contains:', verifyValue);
             
-            // CRITICAL: Use multiple methods to ensure Azure DevOps detects the change
-            try {
-                // Method 1: Use setFieldValueEx if available (newer API)
-                if (this.workItemFormService.setFieldValueEx) {
-                    await this.workItemFormService.setFieldValueEx(this.fieldName, value, true);
-                    console.log('Identity Multi-Select: Used setFieldValueEx');
-                }
-            } catch (ex1) {
-                console.log('Identity Multi-Select: setFieldValueEx not available or failed');
-            }
-            
-            try {
-                // Method 2: Force a refresh to notify the form of changes
-                await this.workItemFormService.refresh();
-                console.log('Identity Multi-Select: Form refreshed');
-            } catch (ex2) {
-                console.log('Identity Multi-Select: Form refresh failed');
-            }
-            
-            // Method 3: Notify field change
+            // Notify Azure DevOps that the field has changed
             this.notifyFieldChange(value);
             
         } catch (error) {
             console.error('Identity Multi-Select: Error updating field value:', error);
             console.error('Identity Multi-Select: Field name:', this.fieldName);
             console.error('Identity Multi-Select: Selected identities:', this.selectedIdentities);
-            
-            // Fallback to string format if field info retrieval fails
-            const fallbackValue = this.selectedIdentities
-                .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                .join(this.separator === ',' ? ', ' : '; ');
-            
-            try {
-                console.log('Identity Multi-Select: Attempting fallback with value:', fallbackValue);
-                await this.workItemFormService.setFieldValue(this.fieldName, fallbackValue);
-                
-                // Also try to notify of changes in fallback
-                try {
-                    if (this.workItemFormService.setFieldValueEx) {
-                        await this.workItemFormService.setFieldValueEx(this.fieldName, fallbackValue, true);
-                    }
-                    await this.workItemFormService.refresh();
-                } catch (refreshError) {
-                    console.log('Identity Multi-Select: Fallback refresh failed');
-                }
-                
-                this.notifyFieldChange(fallbackValue);
-                console.log('Identity Multi-Select: Fallback field value updated:', fallbackValue);
-            } catch (fallbackError) {
-                console.error('Identity Multi-Select: Fallback update also failed:', fallbackError);
-            }
         }
     }
 
@@ -580,28 +507,29 @@ class IdentityMultiSelectControl {
         }
     }
 
-    private notifyFieldChange(value: string | string[]): void {
+    private notifyFieldChange(value: string): void {
         try {
-            // Try to trigger change events that Azure DevOps listens for
-            if (typeof window !== 'undefined' && (window as any).parent) {
-                // Post message to parent frame to notify of field change
-                (window as any).parent.postMessage({
-                    type: 'vss-web.fieldChanged',
+            console.log('Identity Multi-Select: Notifying field change with value:', value);
+            
+            // Method 1: Direct event dispatch
+            const event = new CustomEvent('fieldChanged', {
+                detail: {
                     fieldName: this.fieldName,
-                    value: value,
-                    isValid: true
+                    value: value
+                }
+            });
+            window.dispatchEvent(event);
+            
+            // Method 2: Try parent window communication
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'fieldChanged',
+                    fieldName: this.fieldName,
+                    value: value
                 }, '*');
             }
             
-            // Also try VSS event system if available
-            if (typeof VSS !== 'undefined' && VSS.getService) {
-                VSS.getService(VSS.ServiceIds.ExtensionData).then((extensionDataService: any) => {
-                    // This is just to ensure VSS services are active
-                    console.log('Identity Multi-Select: VSS services are active');
-                }).catch(() => {
-                    // Ignore errors
-                });
-            }
+            console.log('Identity Multi-Select: Field change notifications sent');
             
         } catch (error) {
             console.log('Identity Multi-Select: Could not notify field change:', error);
