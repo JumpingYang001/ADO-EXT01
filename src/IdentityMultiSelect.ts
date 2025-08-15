@@ -95,6 +95,9 @@ class IdentityMultiSelectControl {
             console.error('Identity Multi-Select: Initialization failed:', error);
             this.showDemoMode();
         } finally {
+            // Register the control object so Azure DevOps can communicate with it
+            this.registerControl();
+            
             // Always notify VSS that loading is complete
             if (typeof VSS !== 'undefined' && VSS.notifyLoadSucceeded) {
                 VSS.notifyLoadSucceeded();
@@ -451,6 +454,9 @@ class IdentityMultiSelectControl {
                 await this.workItemFormService.refresh();
             }
             
+            // Additional method to ensure change detection
+            this.notifyFieldChange(value);
+            
         } catch (error) {
             console.error('Identity Multi-Select: Error updating field value:', error);
             
@@ -498,6 +504,34 @@ class IdentityMultiSelectControl {
         }
     }
 
+    private notifyFieldChange(value: string): void {
+        try {
+            // Try to trigger change events that Azure DevOps listens for
+            if (typeof window !== 'undefined' && (window as any).parent) {
+                // Post message to parent frame to notify of field change
+                (window as any).parent.postMessage({
+                    type: 'vss-web.fieldChanged',
+                    fieldName: this.fieldName,
+                    value: value,
+                    isValid: true
+                }, '*');
+            }
+            
+            // Also try VSS event system if available
+            if (typeof VSS !== 'undefined' && VSS.getService) {
+                VSS.getService(VSS.ServiceIds.ExtensionData).then((extensionDataService: any) => {
+                    // This is just to ensure VSS services are active
+                    console.log('Identity Multi-Select: VSS services are active');
+                }).catch(() => {
+                    // Ignore errors
+                });
+            }
+            
+        } catch (error) {
+            console.log('Identity Multi-Select: Could not notify field change:', error);
+        }
+    }
+
     private getInitials(name: string): string {
         return name.split(' ')
             .map(part => part.charAt(0))
@@ -511,18 +545,92 @@ class IdentityMultiSelectControl {
         div.textContent = text;
         return div.innerHTML;
     }
+
+    private registerControl(): void {
+        try {
+            // Register the control object with VSS so Azure DevOps can communicate with it
+            VSS.register(VSS.getContribution().id, {
+                // Required method: called when the control should be updated
+                onFieldChanged: (args: any) => {
+                    console.log('Identity Multi-Select: onFieldChanged called', args);
+                },
+                
+                // Required method: called when Azure DevOps wants to validate the field
+                isValid: () => {
+                    console.log('Identity Multi-Select: isValid called');
+                    return true;
+                },
+                
+                // Required method: called when Azure DevOps wants to get the current value
+                getValue: () => {
+                    console.log('Identity Multi-Select: getValue called');
+                    return this.getCurrentFieldValue();
+                },
+                
+                // Required method: called when Azure DevOps wants to set a value
+                setValue: (value: string) => {
+                    console.log('Identity Multi-Select: setValue called with:', value);
+                    this.setFieldValueFromExternal(value);
+                }
+            });
+            
+            console.log('Identity Multi-Select: Control registered successfully');
+        } catch (error) {
+            console.error('Identity Multi-Select: Error registering control:', error);
+        }
+    }
+
+    private getCurrentFieldValue(): string {
+        // Return the current field value in the appropriate format
+        try {
+            if (this.selectedIdentities.length === 0) {
+                return '';
+            }
+
+            // Use semicolon-separated format for multiple identities
+            return this.selectedIdentities
+                .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
+                .join('; ');
+        } catch (error) {
+            console.error('Identity Multi-Select: Error getting current field value:', error);
+            return '';
+        }
+    }
+
+    private async setFieldValueFromExternal(value: string): Promise<void> {
+        try {
+            console.log('Identity Multi-Select: Setting value from external:', value);
+            
+            // Clear current selections
+            this.selectedIdentities = [];
+            
+            // Parse the new value
+            if (value) {
+                await this.parseFieldValue(value);
+            }
+            
+            // Update the UI
+            this.updateSelectedDisplay();
+            
+        } catch (error) {
+            console.error('Identity Multi-Select: Error setting field value from external:', error);
+        }
+    }
 }
+
+// Global variable to hold the control instance
+let identityControlInstance: IdentityMultiSelectControl;
 
 // Initialize the control when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    new IdentityMultiSelectControl();
+    identityControlInstance = new IdentityMultiSelectControl();
 });
 
 // Also initialize if DOM is already ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
-        new IdentityMultiSelectControl();
+        identityControlInstance = new IdentityMultiSelectControl();
     });
 } else {
-    new IdentityMultiSelectControl();
+    identityControlInstance = new IdentityMultiSelectControl();
 }
