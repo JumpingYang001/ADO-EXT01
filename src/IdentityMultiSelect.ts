@@ -450,9 +450,34 @@ class IdentityMultiSelectControl {
     }
 
     private async updateFieldValue(): Promise<void> {
+        console.log('Identity Multi-Select: updateFieldValue called');
+        console.log('Identity Multi-Select: workItemFormService:', this.workItemFormService);
+        console.log('Identity Multi-Select: fieldName:', this.fieldName);
+        console.log('Identity Multi-Select: selectedIdentities:', this.selectedIdentities);
+        
         if (!this.workItemFormService || !this.fieldName) {
             console.warn('Identity Multi-Select: Cannot update field - missing service or field name');
-            return;
+            console.warn('Identity Multi-Select: Service available:', !!this.workItemFormService);
+            console.warn('Identity Multi-Select: Field name available:', !!this.fieldName);
+            console.warn('Identity Multi-Select: Field name value:', this.fieldName);
+            
+            // Try to get the service again
+            if (!this.workItemFormService) {
+                console.log('Identity Multi-Select: Attempting to get work item form service again...');
+                try {
+                    this.workItemFormService = await VSS.getService(VSS.ServiceIds.WorkItemFormService);
+                    console.log('Identity Multi-Select: Successfully obtained work item form service on retry');
+                } catch (retryError) {
+                    console.error('Identity Multi-Select: Retry failed:', retryError);
+                    return;
+                }
+            }
+            
+            // If still no field name, cannot proceed
+            if (!this.fieldName) {
+                console.error('Identity Multi-Select: No field name available, cannot update field');
+                return;
+            }
         }
 
         try {
