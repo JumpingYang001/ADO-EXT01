@@ -132,6 +132,7 @@ class IdentityMultiSelectControl {
         try {
             const configuration = VSS.getConfiguration();
             console.log('Identity Multi-Select: Configuration received:', configuration);
+            console.log('Identity Multi-Select: Full configuration object:', JSON.stringify(configuration, null, 2));
 
             if (configuration && configuration.inputs) {
                 const inputs = configuration.inputs as ControlInputs;
@@ -142,6 +143,14 @@ class IdentityMultiSelectControl {
                 this.separator = inputs.separator === 'comma' || inputs.separator === ',' ? ',' : ';';
                 
                 console.log('Identity Multi-Select: Parsed config - Field:', this.fieldName, 'Max:', this.maxSelections, 'Groups:', this.allowGroups, 'Separator:', this.separator);
+                
+                // Additional debugging for field name
+                if (!this.fieldName) {
+                    console.warn('Identity Multi-Select: WARNING - No field name configured!');
+                    console.log('Identity Multi-Select: Available inputs:', Object.keys(inputs));
+                }
+            } else {
+                console.warn('Identity Multi-Select: No configuration inputs found');
             }
         } catch (error) {
             console.error('Identity Multi-Select: Error parsing configuration:', error);
@@ -160,13 +169,25 @@ class IdentityMultiSelectControl {
     }
 
     private async loadFieldValue(): Promise<void> {
-        if (!this.workItemFormService || !this.fieldName) {
+        if (!this.workItemFormService) {
+            console.warn('Identity Multi-Select: No work item form service available');
+            return;
+        }
+        
+        if (!this.fieldName) {
+            console.warn('Identity Multi-Select: No field name configured');
             return;
         }
 
         try {
+            console.log('Identity Multi-Select: Attempting to load field value for:', this.fieldName);
+            
+            // Try to get field information first
+            const fieldInfo = await this.workItemFormService.getField(this.fieldName);
+            console.log('Identity Multi-Select: Field info:', fieldInfo);
+            
             const fieldValue = await this.workItemFormService.getFieldValue(this.fieldName);
-            console.log('Identity Multi-Select: Current field value:', fieldValue);
+            console.log('Identity Multi-Select: Current field value:', fieldValue, 'Type:', typeof fieldValue);
 
             if (fieldValue) {
                 await this.parseFieldValue(fieldValue);
@@ -174,9 +195,11 @@ class IdentityMultiSelectControl {
 
             // Check if field is read-only
             this.isReadOnly = await this.workItemFormService.isReadOnly();
+            console.log('Identity Multi-Select: Field read-only status:', this.isReadOnly);
             
         } catch (error) {
             console.error('Identity Multi-Select: Error loading field value:', error);
+            console.error('Identity Multi-Select: Field name being used:', this.fieldName);
         }
     }
 
@@ -418,21 +441,52 @@ class IdentityMultiSelectControl {
 
     private async updateFieldValue(): Promise<void> {
         if (!this.workItemFormService || !this.fieldName) {
+            console.warn('Identity Multi-Select: Cannot update field - missing service or field name');
             return;
         }
 
         try {
+            console.log('Identity Multi-Select: Starting field update for:', this.fieldName);
+            console.log('Identity Multi-Select: Selected identities:', this.selectedIdentities);
+            
             // Get the field info to determine the field type
             const fieldInfo = await this.workItemFormService.getField(this.fieldName);
             const fieldType = fieldInfo?.type?.toLowerCase();
+            console.log('Identity Multi-Select: Field type detected:', fieldType, 'Field info:', fieldInfo);
             
-            let value: string;
+            let value: string | string[];
             
             if (fieldType === 'identity') {
-                // For Identity fields, use separator-delimited unique names
-                value = this.selectedIdentities
-                    .map(identity => identity.uniqueName)
-                    .join(this.separator === ',' ? ', ' : '; ');
+                // For Identity fields, Azure DevOps expects different formats
+                // Try multiple formats to ensure compatibility
+                
+                if (this.selectedIdentities.length === 1) {
+                    // Single identity - use unique name directly
+                    value = this.selectedIdentities[0].uniqueName;
+                } else {
+                    // Multiple identities - try array format first, then string format
+                    const identityArray = this.selectedIdentities.map(identity => identity.uniqueName);
+                    
+                    try {
+                        // Try setting as array first (preferred for multi-identity)
+                        await this.workItemFormService.setFieldValue(this.fieldName, identityArray);
+                        console.log('Identity Multi-Select: Successfully set identity array:', identityArray);
+                        
+                        // Verify the change was accepted
+                        const verifyValue = await this.workItemFormService.getFieldValue(this.fieldName);
+                        console.log('Identity Multi-Select: Verification value:', verifyValue);
+                        
+                        this.notifyFieldChange(identityArray);
+                        return;
+                        
+                    } catch (arrayError) {
+                        console.log('Identity Multi-Select: Array format failed, trying string format:', arrayError);
+                        // Fall back to string format
+                        value = this.selectedIdentities
+                            .map(identity => identity.uniqueName)
+                            .join(this.separator === ',' ? ', ' : '; ');
+                    }
+                }
             } else {
                 // For String fields, use display name format
                 value = this.selectedIdentities
@@ -440,25 +494,42 @@ class IdentityMultiSelectControl {
                     .join(this.separator === ',' ? ', ' : '; ');
             }
 
+            console.log('Identity Multi-Select: Setting field value:', value);
+            
             // Set the field value
             await this.workItemFormService.setFieldValue(this.fieldName, value);
-            console.log('Identity Multi-Select: Field value updated:', value, 'Field type:', fieldType);
+            console.log('Identity Multi-Select: Field value set successfully');
             
-            // CRITICAL: Notify Azure DevOps that the form has been modified
-            // This enables the Save button
-            if (this.workItemFormService.setFieldValueEx) {
-                // Use setFieldValueEx if available (newer API)
-                await this.workItemFormService.setFieldValueEx(this.fieldName, value, true);
-            } else {
-                // Force a refresh to notify the form of changes
-                await this.workItemFormService.refresh();
+            // Verify the value was set
+            const verifyValue = await this.workItemFormService.getFieldValue(this.fieldName);
+            console.log('Identity Multi-Select: Verification - field now contains:', verifyValue);
+            
+            // CRITICAL: Use multiple methods to ensure Azure DevOps detects the change
+            try {
+                // Method 1: Use setFieldValueEx if available (newer API)
+                if (this.workItemFormService.setFieldValueEx) {
+                    await this.workItemFormService.setFieldValueEx(this.fieldName, value, true);
+                    console.log('Identity Multi-Select: Used setFieldValueEx');
+                }
+            } catch (ex1) {
+                console.log('Identity Multi-Select: setFieldValueEx not available or failed');
             }
             
-            // Additional method to ensure change detection
+            try {
+                // Method 2: Force a refresh to notify the form of changes
+                await this.workItemFormService.refresh();
+                console.log('Identity Multi-Select: Form refreshed');
+            } catch (ex2) {
+                console.log('Identity Multi-Select: Form refresh failed');
+            }
+            
+            // Method 3: Notify field change
             this.notifyFieldChange(value);
             
         } catch (error) {
             console.error('Identity Multi-Select: Error updating field value:', error);
+            console.error('Identity Multi-Select: Field name:', this.fieldName);
+            console.error('Identity Multi-Select: Selected identities:', this.selectedIdentities);
             
             // Fallback to string format if field info retrieval fails
             const fallbackValue = this.selectedIdentities
@@ -466,15 +537,20 @@ class IdentityMultiSelectControl {
                 .join(this.separator === ',' ? ', ' : '; ');
             
             try {
+                console.log('Identity Multi-Select: Attempting fallback with value:', fallbackValue);
                 await this.workItemFormService.setFieldValue(this.fieldName, fallbackValue);
                 
                 // Also try to notify of changes in fallback
-                if (this.workItemFormService.setFieldValueEx) {
-                    await this.workItemFormService.setFieldValueEx(this.fieldName, fallbackValue, true);
-                } else {
+                try {
+                    if (this.workItemFormService.setFieldValueEx) {
+                        await this.workItemFormService.setFieldValueEx(this.fieldName, fallbackValue, true);
+                    }
                     await this.workItemFormService.refresh();
+                } catch (refreshError) {
+                    console.log('Identity Multi-Select: Fallback refresh failed');
                 }
                 
+                this.notifyFieldChange(fallbackValue);
                 console.log('Identity Multi-Select: Fallback field value updated:', fallbackValue);
             } catch (fallbackError) {
                 console.error('Identity Multi-Select: Fallback update also failed:', fallbackError);
@@ -504,7 +580,7 @@ class IdentityMultiSelectControl {
         }
     }
 
-    private notifyFieldChange(value: string): void {
+    private notifyFieldChange(value: string | string[]): void {
         try {
             // Try to trigger change events that Azure DevOps listens for
             if (typeof window !== 'undefined' && (window as any).parent) {
