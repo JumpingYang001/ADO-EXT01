@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.37",
+  "version": "1.0.38",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -70,6 +70,56 @@
             "type": "string",
             "validation": {
               "dataType": "String",
+              "isRequired": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "identity-multiselect-control",
+      "type": "ms.vss-work-web.work-item-form-control",
+      "description": "Multi-selection control for identity fields (users and groups)",
+      "targets": [
+        "ms.vss-work-web.work-item-form"
+      ],
+      "properties": {
+        "name": "Identity Multi-Select",
+        "uri": "dist/IdentityMultiSelect.html",
+        "height": 300,
+        "supportedDataTypes": ["String"],
+        "canSortBy": false,
+        "inputs": [
+          {
+            "id": "FieldName",
+            "name": "Field",
+            "description": "The field associated with the control.",
+            "type": "WorkItemField",
+            "properties": {
+              "workItemFieldTypes": ["String"]
+            },
+            "validation": {
+              "dataType": "String",
+              "isRequired": true
+            }
+          },
+          {
+            "id": "maxSelections",
+            "name": "Maximum Selections",
+            "description": "Maximum number of identities that can be selected (default: 10)",
+            "type": "string",
+            "validation": {
+              "dataType": "String",
+              "isRequired": false
+            }
+          },
+          {
+            "id": "allowGroups",
+            "name": "Allow Groups",
+            "description": "Whether to allow selection of groups in addition to users (default: true)",
+            "type": "boolean",
+            "validation": {
+              "dataType": "Boolean",
               "isRequired": false
             }
           }

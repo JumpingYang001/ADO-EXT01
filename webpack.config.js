@@ -6,10 +6,13 @@ module.exports = (env, argv) => {
   const isDevelopment = argv.mode === 'development';
   
   return {
-    entry: './src/CascadingMultiSelect.ts',
+    entry: {
+      CascadingMultiSelect: './src/CascadingMultiSelect.ts',
+      IdentityMultiSelect: './src/IdentityMultiSelect.ts'
+    },
     output: {
       path: path.resolve(__dirname, 'dist'),
-      filename: 'CascadingMultiSelect.js',
+      filename: '[name].js',
       clean: true
     },
     devtool: isDevelopment ? 'source-map' : false,
@@ -33,6 +36,14 @@ module.exports = (env, argv) => {
       new HtmlWebpackPlugin({
         template: './src/CascadingMultiSelect.html',
         filename: 'CascadingMultiSelect.html',
+        chunks: ['CascadingMultiSelect'],
+        inject: 'body',
+        scriptLoading: 'blocking'
+      }),
+      new HtmlWebpackPlugin({
+        template: './src/IdentityMultiSelect.html',
+        filename: 'IdentityMultiSelect.html',
+        chunks: ['IdentityMultiSelect'],
         inject: 'body',
         scriptLoading: 'blocking'
       }),

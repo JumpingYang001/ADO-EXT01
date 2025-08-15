@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Identity Multi-Select Control</title>
+    <style>
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+        }
+
+        .identity-container {
+            background: white;
+            border: 1px solid #d1d5da;
+            border-radius: 6px;
+            padding: 10px;
+            min-height: 100px;
+        }
+
+        .identity-search {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5da;
+            border-radius: 4px;
+            font-size: 14px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+
+        .identity-search:focus {
+            outline: none;
+            border-color: #0078d4;
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.3);
+        }
+
+        .identity-dropdown {
+            position: relative;
+            display: none;
+            border: 1px solid #d1d5da;
+            border-radius: 4px;
+            background: white;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .identity-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f3f4;
+            display: flex;
+            align-items: center;
+        }
+
+        .identity-option:hover {
+            background-color: #f1f3f4;
+        }
+
+        .identity-option:last-child {
+            border-bottom: none;
+        }
+
+        .identity-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            margin-right: 8px;
+            background-color: #0078d4;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .identity-info {
+            flex: 1;
+        }
+
+        .identity-name {
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .identity-email {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .selected-identities {
+            margin-top: 10px;
+        }
+
+        .selected-identity {
+            display: inline-flex;
+            align-items: center;
+            background-color: #e3f2fd;
+            border: 1px solid #2196f3;
+            border-radius: 16px;
+            padding: 4px 8px;
+            margin: 2px;
+            font-size: 12px;
+        }
+
+        .selected-identity .remove-btn {
+            margin-left: 6px;
+            cursor: pointer;
+            color: #666;
+            font-weight: bold;
+        }
+
+        .selected-identity .remove-btn:hover {
+            color: #f44336;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .demo-mode {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 10px;
+            font-size: 12px;
+            color: #856404;
+        }
+    </style>
+</head>
+<body>
+    <div id="identity-control">
+        <div class="identity-container">
+            <div id="demo-notice" class="demo-mode" style="display: none;">
+                Demo Mode: Using sample identities. In actual Azure DevOps, this will search real users and groups.
+            </div>
+            
+            <input type="text" 
+                   id="identity-search" 
+                   class="identity-search" 
+                   placeholder="Search for users or groups..."
+                   autocomplete="off" />
+            
+            <div id="identity-dropdown" class="identity-dropdown"></div>
+            
+            <div id="selected-identities" class="selected-identities"></div>
+        </div>
+    </div>
+
+    <script src="VSS.SDK.min.js"></script>
+</body>
+</html>
