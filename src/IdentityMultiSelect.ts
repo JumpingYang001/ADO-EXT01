@@ -207,7 +207,17 @@ class IdentityMultiSelectControl {
             };
         }
         
-        // If no match, treat as display name
+        // If no angle brackets, check if it's an email (Identity field format)
+        if (identityString.includes('@')) {
+            return {
+                id: identityString,
+                displayName: identityString.split('@')[0], // Use part before @ as display name
+                uniqueName: identityString,
+                entityType: "User"
+            };
+        }
+        
+        // If no match, treat as display name only
         return {
             id: identityString,
             displayName: identityString,
@@ -380,16 +390,41 @@ class IdentityMultiSelectControl {
         }
 
         try {
-            // Format as semicolon-separated list
-            const value = this.selectedIdentities
-                .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                .join('; ');
+            // Get the field info to determine the field type
+            const fieldInfo = await this.workItemFormService.getField(this.fieldName);
+            const fieldType = fieldInfo?.type?.toLowerCase();
+            
+            let value: string;
+            
+            if (fieldType === 'identity') {
+                // For Identity fields, use semicolon-separated unique names
+                value = this.selectedIdentities
+                    .map(identity => identity.uniqueName)
+                    .join('; ');
+            } else {
+                // For String fields, use display name format
+                value = this.selectedIdentities
+                    .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
+                    .join('; ');
+            }
 
             await this.workItemFormService.setFieldValue(this.fieldName, value);
-            console.log('Identity Multi-Select: Field value updated:', value);
+            console.log('Identity Multi-Select: Field value updated:', value, 'Field type:', fieldType);
             
         } catch (error) {
             console.error('Identity Multi-Select: Error updating field value:', error);
+            
+            // Fallback to string format if field info retrieval fails
+            const fallbackValue = this.selectedIdentities
+                .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
+                .join('; ');
+            
+            try {
+                await this.workItemFormService.setFieldValue(this.fieldName, fallbackValue);
+                console.log('Identity Multi-Select: Fallback field value updated:', fallbackValue);
+            } catch (fallbackError) {
+                console.error('Identity Multi-Select: Fallback update also failed:', fallbackError);
+            }
         }
     }
 

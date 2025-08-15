@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.38",
+  "version": "1.0.39",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -87,7 +87,7 @@
         "name": "Identity Multi-Select",
         "uri": "dist/IdentityMultiSelect.html",
         "height": 300,
-        "supportedDataTypes": ["String"],
+        "supportedDataTypes": ["String", "Identity"],
         "canSortBy": false,
         "inputs": [
           {
@@ -96,7 +96,7 @@
             "description": "The field associated with the control.",
             "type": "WorkItemField",
             "properties": {
-              "workItemFieldTypes": ["String"]
+              "workItemFieldTypes": ["String", "Identity"]
             },
             "validation": {
               "dataType": "String",
