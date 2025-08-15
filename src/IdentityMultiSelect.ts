@@ -13,6 +13,7 @@ interface ControlInputs {
     FieldName?: string;
     maxSelections?: string;
     allowGroups?: string;
+    separator?: string;
 }
 
 class IdentityMultiSelectControl {
@@ -21,6 +22,7 @@ class IdentityMultiSelectControl {
     private fieldName: string = '';
     private maxSelections: number = 10;
     private allowGroups: boolean = true;
+    private separator: string = ';';
     private isInitialized: boolean = false;
     private workItemFormService: any = null;
     private isReadOnly: boolean = false;
@@ -134,8 +136,9 @@ class IdentityMultiSelectControl {
                 this.fieldName = inputs.FieldName || '';
                 this.maxSelections = parseInt(inputs.maxSelections || '10');
                 this.allowGroups = inputs.allowGroups !== 'false';
+                this.separator = inputs.separator === 'comma' || inputs.separator === ',' ? ',' : ';';
                 
-                console.log('Identity Multi-Select: Parsed config - Field:', this.fieldName, 'Max:', this.maxSelections, 'Groups:', this.allowGroups);
+                console.log('Identity Multi-Select: Parsed config - Field:', this.fieldName, 'Max:', this.maxSelections, 'Groups:', this.allowGroups, 'Separator:', this.separator);
             }
         } catch (error) {
             console.error('Identity Multi-Select: Error parsing configuration:', error);
@@ -178,8 +181,8 @@ class IdentityMultiSelectControl {
         if (!value) return;
 
         try {
-            // Parse semicolon-separated identity values
-            const identityStrings = value.split(';').filter(s => s.trim());
+            // Parse separator-delimited identity values
+            const identityStrings = value.split(/[;,]/).filter(s => s.trim());
             
             for (const identityString of identityStrings) {
                 const identity = await this.parseIdentityString(identityString.trim());
@@ -340,6 +343,7 @@ class IdentityMultiSelectControl {
         this.selectedIdentities.push(identity);
         this.updateSelectedDisplay();
         this.updateFieldValue();
+        this.notifyFormChanged(); // Add form change notification
         this.hideDropdown();
         
         // Clear search
@@ -353,6 +357,31 @@ class IdentityMultiSelectControl {
         this.selectedIdentities = this.selectedIdentities.filter(i => i.id !== identityId);
         this.updateSelectedDisplay();
         this.updateFieldValue();
+        this.notifyFormChanged(); // Add form change notification
+    }
+
+    private notifyFormChanged(): void {
+        // Additional method to ensure the form recognizes changes
+        try {
+            if (this.workItemFormService) {
+                // Trigger form validation and change detection
+                setTimeout(async () => {
+                    try {
+                        // Force a field validation
+                        await this.workItemFormService.isValid();
+                        
+                        // Get current field value to trigger change detection
+                        const currentValue = await this.workItemFormService.getFieldValue(this.fieldName);
+                        console.log('Identity Multi-Select: Current field value after change:', currentValue);
+                        
+                    } catch (error) {
+                        console.log('Identity Multi-Select: Form validation check completed');
+                    }
+                }, 100);
+            }
+        } catch (error) {
+            console.log('Identity Multi-Select: Form change notification completed');
+        }
     }
 
     private updateSelectedDisplay(): void {
@@ -397,19 +426,30 @@ class IdentityMultiSelectControl {
             let value: string;
             
             if (fieldType === 'identity') {
-                // For Identity fields, use semicolon-separated unique names
+                // For Identity fields, use separator-delimited unique names
                 value = this.selectedIdentities
                     .map(identity => identity.uniqueName)
-                    .join('; ');
+                    .join(this.separator === ',' ? ', ' : '; ');
             } else {
                 // For String fields, use display name format
                 value = this.selectedIdentities
                     .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                    .join('; ');
+                    .join(this.separator === ',' ? ', ' : '; ');
             }
 
+            // Set the field value
             await this.workItemFormService.setFieldValue(this.fieldName, value);
             console.log('Identity Multi-Select: Field value updated:', value, 'Field type:', fieldType);
+            
+            // CRITICAL: Notify Azure DevOps that the form has been modified
+            // This enables the Save button
+            if (this.workItemFormService.setFieldValueEx) {
+                // Use setFieldValueEx if available (newer API)
+                await this.workItemFormService.setFieldValueEx(this.fieldName, value, true);
+            } else {
+                // Force a refresh to notify the form of changes
+                await this.workItemFormService.refresh();
+            }
             
         } catch (error) {
             console.error('Identity Multi-Select: Error updating field value:', error);
@@ -417,10 +457,18 @@ class IdentityMultiSelectControl {
             // Fallback to string format if field info retrieval fails
             const fallbackValue = this.selectedIdentities
                 .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                .join('; ');
+                .join(this.separator === ',' ? ', ' : '; ');
             
             try {
                 await this.workItemFormService.setFieldValue(this.fieldName, fallbackValue);
+                
+                // Also try to notify of changes in fallback
+                if (this.workItemFormService.setFieldValueEx) {
+                    await this.workItemFormService.setFieldValueEx(this.fieldName, fallbackValue, true);
+                } else {
+                    await this.workItemFormService.refresh();
+                }
+                
                 console.log('Identity Multi-Select: Fallback field value updated:', fallbackValue);
             } catch (fallbackError) {
                 console.error('Identity Multi-Select: Fallback update also failed:', fallbackError);
