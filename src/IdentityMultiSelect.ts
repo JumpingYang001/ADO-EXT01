@@ -134,9 +134,18 @@ class IdentityMultiSelectControl {
             console.log('Identity Multi-Select: Configuration received:', configuration);
             console.log('Identity Multi-Select: Full configuration object:', JSON.stringify(configuration, null, 2));
 
-            if (configuration && configuration.inputs) {
-                const inputs = configuration.inputs as ControlInputs;
-                
+            // Handle both configuration formats: configuration.inputs and configuration.witInputs
+            let inputs: ControlInputs | undefined;
+            
+            if (configuration && configuration.witInputs) {
+                inputs = configuration.witInputs as ControlInputs;
+                console.log('Identity Multi-Select: Using witInputs format');
+            } else if (configuration && configuration.inputs) {
+                inputs = configuration.inputs as ControlInputs;
+                console.log('Identity Multi-Select: Using inputs format');
+            }
+
+            if (inputs) {
                 this.fieldName = inputs.FieldName || '';
                 this.maxSelections = parseInt(inputs.maxSelections || '10');
                 this.allowGroups = inputs.allowGroups !== 'false';
@@ -151,6 +160,7 @@ class IdentityMultiSelectControl {
                 }
             } else {
                 console.warn('Identity Multi-Select: No configuration inputs found');
+                console.log('Identity Multi-Select: Configuration structure:', configuration);
             }
         } catch (error) {
             console.error('Identity Multi-Select: Error parsing configuration:', error);
