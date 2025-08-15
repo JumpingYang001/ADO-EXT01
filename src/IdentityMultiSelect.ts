@@ -169,13 +169,88 @@ class IdentityMultiSelectControl {
 
     private async initializeWorkItemService(): Promise<void> {
         try {
-            // Try to get the work item form service
-            this.workItemFormService = await VSS.getService(VSS.ServiceIds.WorkItemFormService);
-            console.log('Identity Multi-Select: Work item form service obtained');
+            console.log('Identity Multi-Select: Getting work item form service...');
+            
+            // Use the same approach as the working CascadingMultiSelect
+            // Try multiple service IDs in sequence
+            const serviceIds = [
+                'ms.vss-work-web.work-item-form',
+                VSS.ServiceIds?.WorkItemFormService,
+                'ms.vss-work-web.work-item-form-service'
+            ].filter(Boolean); // Remove undefined values
+            
+            let serviceObtained = false;
+            
+            for (const serviceId of serviceIds) {
+                try {
+                    console.log('Identity Multi-Select: Attempting to get service with ID:', serviceId);
+                    this.workItemFormService = await VSS.getService(serviceId);
+                    
+                    // Verify service has required methods (like CascadingMultiSelect does)
+                    if (this.workItemFormService && 
+                        this.workItemFormService.getFieldValue && 
+                        this.workItemFormService.setFieldValue) {
+                        console.log('Identity Multi-Select: Service obtained with ID:', serviceId);
+                        serviceObtained = true;
+                        break;
+                    }
+                } catch (error) {
+                    // Don't log errors for expected failures - just continue to next method
+                    console.log(`Identity Multi-Select: Service ID ${serviceId} not available, trying next...`);
+                }
+            }
+            
+            if (!serviceObtained) {
+                console.log('Identity Multi-Select: Standard service methods failed, trying VSS.require fallback...');
+                await this.tryAlternativeServiceMethods();
+                return;
+            }
+            
+            console.log('Identity Multi-Select: Work item form service verified and ready');
+            
         } catch (error) {
-            console.log('Identity Multi-Select: Could not get work item form service, using demo mode');
-            this.showDemoMode();
+            console.log('Identity Multi-Select: Error getting work item form service:', error);
+            await this.tryAlternativeServiceMethods();
         }
+    }
+
+    private async tryAlternativeServiceMethods(): Promise<void> {
+        console.log('Identity Multi-Select: Trying alternative service methods...');
+        
+        // Method 1: Try VSS.require only if window.require exists (like CascadingMultiSelect)
+        if (typeof (window as any).require === 'function') {
+            try {
+                await new Promise<void>((resolve, reject) => {
+                    VSS.require([
+                        'TFS/WorkItemTracking/Services'
+                    ], (Services: any) => {
+                        try {
+                            this.workItemFormService = Services.WorkItemFormService.getService();
+                            if (this.workItemFormService?.getFieldValue && this.workItemFormService?.setFieldValue) {
+                                console.log('Identity Multi-Select: Work item form service obtained via VSS.require');
+                                resolve();
+                            } else {
+                                reject(new Error('Service methods not available'));
+                            }
+                        } catch (err) {
+                            reject(err);
+                        }
+                    }, reject);
+                });
+                
+                console.log('Identity Multi-Select: Successfully obtained service via VSS.require');
+                return;
+                
+            } catch (error) {
+                console.log('Identity Multi-Select: VSS.require method not available or failed');
+            }
+        } else {
+            console.log('Identity Multi-Select: VSS.require method not available (expected in this environment)');
+        }
+        
+        // If all methods fail, go to demo mode but still notify success
+        console.log('Identity Multi-Select: All service methods failed, using demo mode');
+        this.showDemoMode();
     }
 
     private async loadFieldValue(): Promise<void> {
