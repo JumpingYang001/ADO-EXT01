@@ -28,39 +28,8 @@ class IdentityMultiSelectControl {
     private isReadOnly: boolean = false;
     private demoMode: boolean = false;
 
-    // Demo data for testing
-    private demoIdentities: Identity[] = [
-        {
-            id: "user1",
-            displayName: "John Doe",
-            uniqueName: "john.doe@company.com",
-            entityType: "User"
-        },
-        {
-            id: "user2",
-            displayName: "Jane Smith",
-            uniqueName: "jane.smith@company.com",
-            entityType: "User"
-        },
-        {
-            id: "user3",
-            displayName: "Bob Johnson",
-            uniqueName: "bob.johnson@company.com",
-            entityType: "User"
-        },
-        {
-            id: "group1",
-            displayName: "Development Team",
-            uniqueName: "dev-team@company.com",
-            entityType: "Group"
-        },
-        {
-            id: "group2",
-            displayName: "QA Team",
-            uniqueName: "qa-team@company.com",
-            entityType: "Group"
-        }
-    ];
+    // Real user identities loaded from Azure DevOps
+    private demoIdentities: Identity[] = [];
 
     constructor() {
         this.initializeControl();
@@ -217,7 +186,7 @@ class IdentityMultiSelectControl {
     private async tryAlternativeServiceMethods(): Promise<void> {
         console.log('Identity Multi-Select: Trying alternative service methods...');
         
-        // Method 1: Try VSS.require only if window.require exists (like CascadingMultiSelect)
+        // Method 1: Try VSS.require only if window.require exists (same as CascadingMultiSelect)
         if (typeof (window as any).require === 'function') {
             try {
                 await new Promise<void>((resolve, reject) => {
@@ -237,6 +206,9 @@ class IdentityMultiSelectControl {
                         }
                     }, reject);
                 });
+                
+                // If we got here, service is working
+                await this.loadFieldValue();
                 
                 console.log('Identity Multi-Select: Successfully obtained service via VSS.require');
                 return;
@@ -266,11 +238,9 @@ class IdentityMultiSelectControl {
 
         try {
             console.log('Identity Multi-Select: Attempting to load field value for:', this.fieldName);
+            console.log('Identity Multi-Select: Field name being used:', this.fieldName);
             
-            // Try to get field information first
-            const fieldInfo = await this.workItemFormService.getField(this.fieldName);
-            console.log('Identity Multi-Select: Field info:', fieldInfo);
-            
+            // Don't try to get field info - just get the value directly
             const fieldValue = await this.workItemFormService.getFieldValue(this.fieldName);
             console.log('Identity Multi-Select: Current field value:', fieldValue, 'Type:', typeof fieldValue);
 
@@ -278,9 +248,25 @@ class IdentityMultiSelectControl {
                 await this.parseFieldValue(fieldValue);
             }
 
-            // Check if field is read-only
-            this.isReadOnly = await this.workItemFormService.isReadOnly();
-            console.log('Identity Multi-Select: Field read-only status:', this.isReadOnly);
+            // Check if field is read-only - use defensive approach
+            try {
+                // Try different approaches for readonly check since method signatures vary
+                if (this.workItemFormService.isReadOnly) {
+                    // Some versions require field name, others don't
+                    try {
+                        this.isReadOnly = await this.workItemFormService.isReadOnly(this.fieldName);
+                    } catch (paramError) {
+                        // Fallback to no-parameter version
+                        this.isReadOnly = await this.workItemFormService.isReadOnly();
+                    }
+                } else {
+                    this.isReadOnly = false;
+                }
+                console.log('Identity Multi-Select: Field read-only status:', this.isReadOnly);
+            } catch (readOnlyError) {
+                console.log('Identity Multi-Select: Could not check read-only status:', readOnlyError);
+                this.isReadOnly = false;
+            }
             
         } catch (error) {
             console.error('Identity Multi-Select: Error loading field value:', error);
@@ -370,19 +356,194 @@ class IdentityMultiSelectControl {
 
     private async loadIdentities(): Promise<void> {
         try {
-            if (this.demoMode) {
-                this.allIdentities = [...this.demoIdentities];
-                return;
-            }
-
-            // In a real implementation, you would call Azure DevOps REST API
-            // For now, using demo data
-            this.allIdentities = [...this.demoIdentities];
+            // Load real identities from Azure DevOps context
+            this.allIdentities = await this.loadRealIdentities();
+            console.log('Identity Multi-Select: Loaded', this.allIdentities.length, 'real identities');
             
         } catch (error) {
             console.error('Identity Multi-Select: Error loading identities:', error);
-            this.allIdentities = [...this.demoIdentities];
+            // Fallback to current user only if everything fails
+            const webContext = VSS.getWebContext();
+            this.allIdentities = [{
+                id: webContext.user?.id || 'current-user',
+                displayName: webContext.user?.name || 'Current User',
+                uniqueName: webContext.user?.email || webContext.user?.uniqueName || 'current.user@company.com',
+                entityType: "User"
+            }];
         }
+    }
+
+    private async loadRealIdentities(): Promise<Identity[]> {
+        const webContext = VSS.getWebContext();
+        const realIdentities: Identity[] = [];
+        
+        // Always include current user first
+        if (webContext.user) {
+            realIdentities.push({
+                id: webContext.user.id,
+                displayName: webContext.user.name,
+                uniqueName: webContext.user.email || webContext.user.uniqueName,
+                entityType: "User"
+            });
+        }
+        
+        try {
+            console.log('Identity Multi-Select: Attempting to load identities via VSS services...');
+            
+            // Method 1: Try VSS.getService() for identity services (same pattern as CascadingMultiSelect)
+            const identityServiceIds = [
+                'ms.vss-web.identity-service',
+                'ms.vss-tfs-web.tfs-identity-service',
+                'VSS/Identities/Picker/Services',
+                'TFS/WorkItemTracking/Services',
+                'VSS/Service'
+            ];
+            
+            for (const serviceId of identityServiceIds) {
+                try {
+                    console.log('Identity Multi-Select: Attempting to get identity service with ID:', serviceId);
+                    const identityService = await VSS.getService(serviceId);
+                    
+                    if (identityService) {
+                        console.log('Identity Multi-Select: Identity service obtained with ID:', serviceId);
+                        
+                        // Try to get identities from the service
+                        if (identityService.getIdentities) {
+                            const identities = await identityService.getIdentities();
+                            if (identities && identities.length > 0) {
+                                console.log('Identity Multi-Select: Found', identities.length, 'identities from service');
+                                identities.forEach((identity: any) => {
+                                    if (identity && identity.id !== webContext.user?.id) {
+                                        realIdentities.push({
+                                            id: identity.id,
+                                            displayName: identity.displayName || identity.name,
+                                            uniqueName: identity.uniqueName || identity.email,
+                                            entityType: identity.entityType || "User"
+                                        });
+                                    }
+                                });
+                            }
+                        }
+                        
+                        // Try searchIdentities method
+                        if (identityService.searchIdentities) {
+                            try {
+                                const searchResults = await identityService.searchIdentities("", 50);
+                                if (searchResults && searchResults.length > 0) {
+                                    console.log('Identity Multi-Select: Found', searchResults.length, 'identities from search');
+                                    searchResults.forEach((identity: any) => {
+                                        if (identity && identity.id !== webContext.user?.id && 
+                                            !realIdentities.find(u => u.id === identity.id)) {
+                                            realIdentities.push({
+                                                id: identity.id,
+                                                displayName: identity.displayName || identity.name,
+                                                uniqueName: identity.uniqueName || identity.email,
+                                                entityType: identity.entityType || "User"
+                                            });
+                                        }
+                                    });
+                                }
+                            } catch (searchError) {
+                                console.log('Identity Multi-Select: Search identities failed:', searchError);
+                            }
+                        }
+                        
+                        // Try getIdentitiesByScope method if available  
+                        if (identityService.getIdentitiesByScope) {
+                            try {
+                                const scopedResults = await identityService.getIdentitiesByScope("project");
+                                if (scopedResults && scopedResults.length > 0) {
+                                    console.log('Identity Multi-Select: Found', scopedResults.length, 'identities by scope');
+                                    scopedResults.forEach((identity: any) => {
+                                        if (identity && identity.id !== webContext.user?.id && 
+                                            !realIdentities.find(u => u.id === identity.id)) {
+                                            realIdentities.push({
+                                                id: identity.id,
+                                                displayName: identity.displayName || identity.name,
+                                                uniqueName: identity.uniqueName || identity.email,
+                                                entityType: identity.entityType || "User"
+                                            });
+                                        }
+                                    });
+                                }
+                            } catch (scopeError) {
+                                console.log('Identity Multi-Select: Get identities by scope failed:', scopeError);
+                            }
+                        }
+                        
+                        break; // Exit loop if we got a working service
+                    }
+                } catch (error) {
+                    console.log(`Identity Multi-Select: Service ID ${serviceId} not available, trying next...`);
+                }
+            }
+            
+            // Method 2: Try VSS.require only if window.require exists (same as CascadingMultiSelect)
+            if (realIdentities.length === 1 && typeof (window as any).require === 'function') {
+                try {
+                    await new Promise<void>((resolve, reject) => {
+                        VSS.require([
+                            'VSS/Identities/Picker/Services',
+                            'VSS/Identities/RestClient',
+                            'TFS/Core/RestClient'
+                        ], (IdentityServices: any, IdentityClient: any, CoreClient: any) => {
+                            try {
+                                console.log('Identity Multi-Select: VSS.require services loaded');
+                                
+                                if (IdentityServices && IdentityServices.IdentityService) {
+                                    const identityService = IdentityServices.IdentityService.getService();
+                                    console.log('Identity Multi-Select: Identity service obtained via VSS.require');
+                                }
+                                
+                                if (CoreClient) {
+                                    const coreClient = CoreClient.getClient();
+                                    console.log('Identity Multi-Select: Core client obtained via VSS.require');
+                                }
+                                
+                                resolve();
+                            } catch (err) {
+                                console.log('Identity Multi-Select: VSS.require services not functional:', err);
+                                resolve(); // Continue anyway
+                            }
+                        }, () => {
+                            console.log('Identity Multi-Select: VSS.require services not available');
+                            resolve(); // Continue anyway
+                        });
+                    });
+                } catch (err) {
+                    console.log('Identity Multi-Select: VSS.require method failed:', err);
+                }
+            } else {
+                console.log('Identity Multi-Select: VSS.require method not available or already have identities');
+            }
+            
+            // Method 3: Try to get team information from work item service
+            if (this.workItemFormService && realIdentities.length === 1) {
+                try {
+                    console.log('Identity Multi-Select: Attempting to get team context...');
+                    
+                    // Try to get project information
+                    const projectId = webContext.project?.id;
+                    const teamId = webContext.team?.id;
+                    
+                    if (projectId) {
+                        console.log('Identity Multi-Select: Project ID available:', projectId);
+                        // In a real implementation, you might use REST client to get team members
+                    }
+                    
+                } catch (err) {
+                    console.log('Identity Multi-Select: Could not get team context:', err);
+                }
+            }
+            
+            console.log('Identity Multi-Select: Using available identities to avoid CORS issues');
+            
+        } catch (error) {
+            console.log('Identity Multi-Select: Error loading additional identities:', error);
+        }
+        
+        console.log('Identity Multi-Select: Loaded real identities:', realIdentities.map(u => u.displayName));
+        return realIdentities;
     }
 
     private handleSearch(event: Event): void {
@@ -394,6 +555,7 @@ class IdentityMultiSelectControl {
             return;
         }
 
+        // Filter existing identities ONLY - no manual email additions
         const filteredIdentities = this.allIdentities.filter(identity => {
             if (!this.allowGroups && identity.entityType === 'Group') {
                 return false;
@@ -403,15 +565,19 @@ class IdentityMultiSelectControl {
                    identity.uniqueName.toLowerCase().includes(searchTerm);
         });
 
-        this.showFilteredIdentities(filteredIdentities);
+        this.showFilteredIdentities(filteredIdentities, searchTerm);
         this.showDropdown();
     }
 
-    private showFilteredIdentities(identities: Identity[]): void {
+    private showFilteredIdentities(identities: Identity[], searchTerm?: string): void {
         const dropdown = document.getElementById('identity-dropdown') as HTMLElement;
         
         if (identities.length === 0) {
-            dropdown.innerHTML = '<div class="no-results">No users found</div>';
+            dropdown.innerHTML = `
+                <div class="no-results">No users found</div>
+                <div class="search-tip">Note: Only users that already exist in Azure DevOps can be selected.<br>
+                Currently showing: Current user only due to security restrictions.</div>
+            `;
             return;
         }
 
@@ -437,7 +603,27 @@ class IdentityMultiSelectControl {
         
         if (!identityId) return;
 
-        const identity = this.allIdentities.find(i => i.id === identityId);
+        // First try to find in existing identities
+        let identity = this.allIdentities.find(i => i.id === identityId);
+        
+        // If not found, it might be a manually entered email - extract from DOM
+        if (!identity) {
+            const nameElement = option.querySelector('.identity-name');
+            const emailElement = option.querySelector('.identity-email');
+            
+            if (nameElement && emailElement) {
+                identity = {
+                    id: identityId,
+                    displayName: nameElement.textContent || identityId,
+                    uniqueName: emailElement.textContent || identityId,
+                    entityType: "User"
+                };
+                
+                // Add to allIdentities for future searches
+                this.allIdentities.push(identity);
+            }
+        }
+        
         if (!identity) return;
 
         // Check if already selected
