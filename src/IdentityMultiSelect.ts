@@ -1,5 +1,5 @@
 // Identity Multi-Select Control for Azure DevOps Work Items
-// Supports multiple identity selection with search functionality
+// Uses native Azure DevOps Identity Picker for better user directory access
 
 interface Identity {
     id: string;
@@ -7,29 +7,54 @@ interface Identity {
     uniqueName: string;
     imageUrl?: string;
     entityType?: string; // User, Group
+    descriptor?: string; // Azure DevOps identity descriptor
 }
 
 interface ControlInputs {
-    FieldName?: string;
+    FieldName?: string;            // String field for storage
+    identitySourceField?: string;  // Identity field for picker UI
     maxSelections?: string;
     allowGroups?: string;
     separator?: string;
 }
 
+// Azure DevOps Identity Picker interfaces
+interface IIdentityPickerSearchOptions {
+    filterByScope?: boolean;
+    scope?: string;
+    multiIdentitySearch?: boolean;
+    showMru?: boolean;
+    showGroups?: boolean;
+    showManageLink?: boolean;
+    showContactCard?: boolean;
+    size?: string; // 'small', 'medium', 'large'
+}
+
+interface IIdentityPickerOptions {
+    operationScope?: { IMS: boolean; Source: boolean };
+    identityType?: { User: boolean; Group: boolean };
+    multiSelect?: boolean;
+    showMruTriangle?: boolean;
+    showContactCard?: boolean;
+    size?: string;
+    callbacks?: {
+        onItemSelect?: (identity: any) => void;
+        preDropdownRender?: (entityList: any[]) => any[];
+    };
+}
+
 class IdentityMultiSelectControl {
     private selectedIdentities: Identity[] = [];
-    private allIdentities: Identity[] = [];
-    private fieldName: string = '';
+    private fieldName: string = '';  // String field for storage
+    private identitySourceFieldName: string = '';  // Identity field for UI picker
     private maxSelections: number = 10;
     private allowGroups: boolean = true;
+    private parseTimeout: NodeJS.Timeout | null = null;
     private separator: string = ';';
     private isInitialized: boolean = false;
     private workItemFormService: any = null;
     private isReadOnly: boolean = false;
-    private demoMode: boolean = false;
-
-    // Real user identities loaded from Azure DevOps
-    private demoIdentities: Identity[] = [];
+    private identityPickerControls: any = null; // Identity Picker Controls module
 
     constructor() {
         this.initializeControl();
@@ -62,7 +87,7 @@ class IdentityMultiSelectControl {
             
         } catch (error) {
             console.error('Identity Multi-Select: Initialization failed:', error);
-            this.showDemoMode();
+            console.log('Identity Multi-Select: Using fallback mode due to initialization error');
         } finally {
             // Register the control object so Azure DevOps can communicate with it
             this.registerControl();
@@ -115,16 +140,22 @@ class IdentityMultiSelectControl {
             }
 
             if (inputs) {
-                this.fieldName = inputs.FieldName || '';
+                this.fieldName = inputs.FieldName || '';  // String field for storage
+                this.identitySourceFieldName = inputs.identitySourceField || '';  // Identity field for picker
                 this.maxSelections = parseInt(inputs.maxSelections || '10');
                 this.allowGroups = inputs.allowGroups !== 'false';
                 this.separator = inputs.separator === 'comma' || inputs.separator === ',' ? ',' : ';';
                 
-                console.log('Identity Multi-Select: Parsed config - Field:', this.fieldName, 'Max:', this.maxSelections, 'Groups:', this.allowGroups, 'Separator:', this.separator);
+                console.log('Identity Multi-Select: Parsed config - Storage Field:', this.fieldName, 'Source Field:', this.identitySourceFieldName, 'Max:', this.maxSelections, 'Groups:', this.allowGroups, 'Separator:', this.separator);
                 
-                // Additional debugging for field name
+                // Validation
                 if (!this.fieldName) {
-                    console.warn('Identity Multi-Select: WARNING - No field name configured!');
+                    console.warn('Identity Multi-Select: WARNING - No storage field name configured!');
+                }
+                if (!this.identitySourceFieldName) {
+                    console.warn('Identity Multi-Select: WARNING - No identity source field configured!');
+                }
+                if (!this.fieldName || !this.identitySourceFieldName) {
                     console.log('Identity Multi-Select: Available inputs:', Object.keys(inputs));
                 }
             } else {
@@ -222,7 +253,7 @@ class IdentityMultiSelectControl {
         
         // If all methods fail, go to demo mode but still notify success
         console.log('Identity Multi-Select: All service methods failed, using demo mode');
-        this.showDemoMode();
+        console.log('Identity Multi-Select: All service methods failed, using fallback mode');
     }
 
     private async loadFieldValue(): Promise<void> {
@@ -326,51 +357,315 @@ class IdentityMultiSelectControl {
         };
     }
 
-    private setupUI(): void {
-        const searchInput = document.getElementById('identity-search') as HTMLInputElement;
-        const dropdown = document.getElementById('identity-dropdown') as HTMLElement;
-
-        if (searchInput) {
-            searchInput.addEventListener('input', (e) => this.handleSearch(e));
-            searchInput.addEventListener('focus', () => this.showDropdown());
-            searchInput.addEventListener('blur', () => {
-                // Delay hiding to allow clicks on dropdown items
-                setTimeout(() => this.hideDropdown(), 150);
-            });
-            
-            if (this.isReadOnly) {
-                searchInput.disabled = true;
-                searchInput.placeholder = 'Read-only';
-            }
-        }
-
-        // Handle clicks outside dropdown
-        document.addEventListener('click', (e) => {
-            if (!dropdown.contains(e.target as Node) && e.target !== searchInput) {
-                this.hideDropdown();
-            }
-        });
-
-        this.updateSelectedDisplay();
-    }
-
-    private async loadIdentities(): Promise<void> {
+    private async setupUI(): Promise<void> {
         try {
-            // Load real identities from Azure DevOps context
-            this.allIdentities = await this.loadRealIdentities();
-            console.log('Identity Multi-Select: Loaded', this.allIdentities.length, 'real identities');
+            console.log('Identity Multi-Select: Setting up dual-field identity picker...');
+            console.log('Identity Multi-Select: Storage field:', this.fieldName, 'Source field:', this.identitySourceFieldName);
+            
+            // Setup identity source field monitoring (the native identity picker)
+            await this.setupIdentitySourceFieldBinding();
+            
+            // Update the initial display
+            this.updateSelectedDisplay();
             
         } catch (error) {
-            console.error('Identity Multi-Select: Error loading identities:', error);
-            // Fallback to current user only if everything fails
-            const webContext = VSS.getWebContext();
-            this.allIdentities = [{
-                id: webContext.user?.id || 'current-user',
-                displayName: webContext.user?.name || 'Current User',
-                uniqueName: webContext.user?.email || webContext.user?.uniqueName || 'current.user@company.com',
-                entityType: "User"
-            }];
+            console.error('Identity Multi-Select: Error setting up UI:', error);
+            this.showFallbackMessage();
         }
+    }
+
+    private async loadIdentityPickerModules(): Promise<void> {
+        return new Promise<void>((resolve, reject) => {
+            try {
+                // Use VSS.require to load Azure DevOps Identity Picker modules
+                VSS.require([
+                    'VSS/Identities/Picker/Controls',
+                    'VSS/Identities/Picker/Services',
+                    'VSS/Identities/RestClient'
+                ], (IdentityPickerControls: any, IdentityPickerServices: any, IdentityRestClient: any) => {
+                    console.log('Identity Multi-Select: Identity Picker modules loaded');
+                    this.identityPickerControls = IdentityPickerControls;
+                    resolve();
+                }, (error: any) => {
+                    console.log('Identity Multi-Select: Could not load Identity Picker modules, trying alternative approach');
+                    this.tryAlternativeIdentityPicker().then(resolve).catch(reject);
+                });
+            } catch (error) {
+                console.log('Identity Multi-Select: VSS.require not available, trying alternative approach');
+                this.tryAlternativeIdentityPicker().then(resolve).catch(reject);
+            }
+        });
+    }
+
+    private async tryAlternativeIdentityPicker(): Promise<void> {
+        // The native Azure DevOps Identity Picker is not available to extensions
+        // We'll create a functional HTML-based identity picker instead
+        console.log('Identity Multi-Select: Native identity picker not available to extensions, using HTML fallback');
+        
+        // Create HTML-based identity picker
+        this.createHtmlIdentityPicker();
+    }
+
+    private async createNativeIdentityPicker(): Promise<void> {
+        const pickerContainer = document.getElementById('native-identity-picker');
+        
+        if (!pickerContainer) {
+            throw new Error('Identity picker container not found');
+        }
+
+        if (this.identityPickerControls && this.identityPickerControls.IdentityPickerSearchControl) {
+            try {
+                console.log('Identity Multi-Select: Creating native identity picker control...');
+                
+                const pickerOptions: IIdentityPickerOptions = {
+                    operationScope: { IMS: true, Source: true },
+                    identityType: { 
+                        User: true, 
+                        Group: this.allowGroups 
+                    },
+                    multiSelect: true,
+                    showMruTriangle: true,
+                    showContactCard: true,
+                    size: 'medium',
+                    callbacks: {
+                        onItemSelect: (identity: any) => {
+                            this.onIdentitySelected(identity);
+                        },
+                        preDropdownRender: (entityList: any[]) => {
+                            // Filter results if needed
+                            return entityList.slice(0, 50); // Limit to 50 results
+                        }
+                    }
+                };
+
+                // Placeholder for where identity picker would be created
+                console.log('Identity Multi-Select: Skipping deprecated identity picker creation');
+                
+            } catch (error) {
+                console.error('Identity Multi-Select: Error creating native identity picker:', error);
+                throw error;
+            }
+        } else {
+            throw new Error('Identity Picker Controls not available');
+        }
+    }
+
+    private createHtmlIdentityPicker(): void {
+        const pickerContainer = document.getElementById('native-identity-picker');
+        
+        if (!pickerContainer) return;
+        
+        console.log('Identity Multi-Select: Creating enhanced HTML identity picker...');
+        
+        // Get current user for suggestions
+        const webContext = VSS.getWebContext();
+        const currentUser = webContext.user;
+        
+        pickerContainer.innerHTML = `
+            <div class="html-identity-picker">
+                <div class="identity-input-container">
+                    <input type="text" 
+                           id="identity-search-input" 
+                           placeholder="Type name or email to search..." 
+                           class="identity-search-input" 
+                           ${this.isReadOnly ? 'disabled' : ''} />
+                    <div class="search-hint">Start typing to search for users</div>
+                </div>
+                <div id="identity-search-dropdown" class="identity-search-dropdown" style="display: none;">
+                    <div class="current-user-suggestion" data-user-id="${currentUser?.id || ''}" data-user-name="${currentUser?.name || ''}" data-user-email="${currentUser?.email || currentUser?.uniqueName || ''}">
+                        <div class="identity-avatar">${this.getInitials(currentUser?.name || 'U')}</div>
+                        <div class="identity-info">
+                            <div class="identity-name">${this.escapeHtml(currentUser?.name || 'Current User')}</div>
+                            <div class="identity-email">${this.escapeHtml(currentUser?.email || currentUser?.uniqueName || '')}</div>
+                        </div>
+                        <div class="user-type">You</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        // Add event handlers for HTML identity picker
+        const searchInput = document.getElementById('identity-search-input') as HTMLInputElement;
+        if (searchInput && !this.isReadOnly) {
+            searchInput.addEventListener('input', (e) => this.handleIdentitySearch(e));
+            searchInput.addEventListener('focus', () => this.showCurrentUserSuggestion());
+            searchInput.addEventListener('blur', () => {
+                setTimeout(() => this.hideSearchDropdown(), 150);
+            });
+        }
+        
+        // Add click handler for current user suggestion
+        const currentUserSuggestion = pickerContainer.querySelector('.current-user-suggestion');
+        if (currentUserSuggestion && !this.isReadOnly) {
+            currentUserSuggestion.addEventListener('click', () => {
+                const userId = currentUserSuggestion.getAttribute('data-user-id');
+                const userName = currentUserSuggestion.getAttribute('data-user-name');
+                const userEmail = currentUserSuggestion.getAttribute('data-user-email');
+                
+                if (userId && userName) {
+                    this.onIdentitySelected({
+                        id: userId,
+                        displayName: userName,
+                        uniqueName: userEmail || userName,
+                        entityType: 'User'
+                    });
+                }
+            });
+        }
+    }
+
+    private onIdentitySelected(identity: any): void {
+        try {
+            console.log('Identity Multi-Select: Identity selected:', identity);
+            
+            // Convert Azure DevOps identity to our format
+            const normalizedIdentity: Identity = {
+                id: identity.entityId || identity.id || identity.uniqueName,
+                displayName: identity.displayName || identity.name,
+                uniqueName: identity.uniqueName || identity.mail || identity.email,
+                imageUrl: identity.imageUrl,
+                entityType: identity.entityType || (identity.isGroup ? 'Group' : 'User'),
+                descriptor: identity.descriptor
+            };
+            
+            // Check if already selected
+            if (this.selectedIdentities.some(i => i.id === normalizedIdentity.id)) {
+                console.log('Identity Multi-Select: Identity already selected');
+                return;
+            }
+            
+            // Check max selections
+            if (this.selectedIdentities.length >= this.maxSelections) {
+                this.showMessage(`Maximum ${this.maxSelections} selections allowed`);
+                return;
+            }
+            
+            // Add to selected identities
+            this.selectedIdentities.push(normalizedIdentity);
+            this.updateSelectedDisplay();
+            this.updateFieldValue();
+            
+            console.log('Identity Multi-Select: Identity added to selection:', normalizedIdentity.displayName);
+            
+        } catch (error) {
+            console.error('Identity Multi-Select: Error handling identity selection:', error);
+        }
+    }
+
+    private async handleIdentitySearch(event: Event): Promise<void> {
+        const input = event.target as HTMLInputElement;
+        const searchTerm = input.value.trim();
+        
+        if (searchTerm.length === 0) {
+            this.showCurrentUserSuggestion();
+            return;
+        }
+        
+        if (searchTerm.length < 2) {
+            this.hideSearchDropdown();
+            return;
+        }
+        
+        // For now, we can only suggest the current user if it matches
+        // In a real implementation, you would call Azure DevOps APIs to search
+        const webContext = VSS.getWebContext();
+        const currentUser = webContext.user;
+        const suggestions: Identity[] = [];
+        
+        if (currentUser && (
+            currentUser.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (currentUser.email && currentUser.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+            (currentUser.uniqueName && currentUser.uniqueName.toLowerCase().includes(searchTerm.toLowerCase()))
+        )) {
+            suggestions.push({
+                id: currentUser.id,
+                displayName: currentUser.name,
+                uniqueName: currentUser.email || currentUser.uniqueName,
+                entityType: 'User'
+            });
+        }
+        
+        this.showSearchResults(suggestions);
+    }
+
+    private showCurrentUserSuggestion(): void {
+        const dropdown = document.getElementById('identity-search-dropdown');
+        if (dropdown) {
+            dropdown.style.display = 'block';
+        }
+    }
+
+    private showSearchResults(identities: Identity[]): void {
+        const dropdown = document.getElementById('identity-search-dropdown');
+        if (!dropdown) return;
+        
+        if (identities.length === 0) {
+            dropdown.innerHTML = `
+                <div class="search-message">
+                    <p>Use the native Azure DevOps identity picker above for full directory search.</p>
+                    <p>This fallback search has limited capabilities.</p>
+                </div>
+            `;
+        } else {
+            dropdown.innerHTML = identities.map(identity => `
+                <div class="identity-result" data-id="${identity.id}">
+                    <div class="identity-avatar">${this.getInitials(identity.displayName)}</div>
+                    <div class="identity-info">
+                        <div class="identity-name">${this.escapeHtml(identity.displayName)}</div>
+                        <div class="identity-email">${this.escapeHtml(identity.uniqueName)}</div>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Add click handlers
+            dropdown.querySelectorAll('.identity-result').forEach(result => {
+                result.addEventListener('click', (e) => {
+                    const identityId = (e.currentTarget as HTMLElement).getAttribute('data-id');
+                    const identity = identities.find(i => i.id === identityId);
+                    if (identity) {
+                        this.onIdentitySelected(identity);
+                    }
+                });
+            });
+        }
+        
+        this.showSearchDropdown();
+    }
+
+    private showSearchDropdown(): void {
+        const dropdown = document.getElementById('identity-search-dropdown');
+        if (dropdown) {
+            dropdown.style.display = 'block';
+        }
+    }
+
+    private hideSearchDropdown(): void {
+        const dropdown = document.getElementById('identity-search-dropdown');
+        if (dropdown) {
+            dropdown.style.display = 'none';
+        }
+    }
+
+    private showMessage(message: string): void {
+        // Simple message display - in a real implementation you might want to use Azure DevOps UI components
+        alert(message);
+    }
+
+    private showFallbackUI(): void {
+        console.log('Identity Multi-Select: Showing fallback UI');
+        const demoNotice = document.getElementById('demo-notice') as HTMLElement;
+        if (demoNotice) {
+            demoNotice.textContent = 'Using fallback identity picker - native picker could not be loaded.';
+            demoNotice.style.display = 'block';
+        }
+        
+        this.createHtmlIdentityPicker();
+    }
+
+    private loadIdentities(): void {
+        // With native identity picker, we don't need to pre-load all identities
+        // The native picker handles search and loading as needed
+        console.log('Identity Multi-Select: Using native Azure DevOps identity picker - no pre-loading needed');
     }
 
     private async loadRealIdentities(): Promise<Identity[]> {
@@ -546,109 +841,10 @@ class IdentityMultiSelectControl {
         return realIdentities;
     }
 
-    private handleSearch(event: Event): void {
-        const input = event.target as HTMLInputElement;
-        const searchTerm = input.value.toLowerCase().trim();
 
-        if (searchTerm.length === 0) {
-            this.hideDropdown();
-            return;
-        }
 
-        // Filter existing identities ONLY - no manual email additions
-        const filteredIdentities = this.allIdentities.filter(identity => {
-            if (!this.allowGroups && identity.entityType === 'Group') {
-                return false;
-            }
-            
-            return identity.displayName.toLowerCase().includes(searchTerm) ||
-                   identity.uniqueName.toLowerCase().includes(searchTerm);
-        });
 
-        this.showFilteredIdentities(filteredIdentities, searchTerm);
-        this.showDropdown();
-    }
 
-    private showFilteredIdentities(identities: Identity[], searchTerm?: string): void {
-        const dropdown = document.getElementById('identity-dropdown') as HTMLElement;
-        
-        if (identities.length === 0) {
-            dropdown.innerHTML = `
-                <div class="no-results">No users found</div>
-                <div class="search-tip">Note: Only users that already exist in Azure DevOps can be selected.<br>
-                Currently showing: Current user only due to security restrictions.</div>
-            `;
-            return;
-        }
-
-        dropdown.innerHTML = identities.map(identity => `
-            <div class="identity-option" data-identity-id="${identity.id}">
-                <div class="identity-avatar">${this.getInitials(identity.displayName)}</div>
-                <div class="identity-info">
-                    <div class="identity-name">${this.escapeHtml(identity.displayName)}</div>
-                    <div class="identity-email">${this.escapeHtml(identity.uniqueName)}</div>
-                </div>
-            </div>
-        `).join('');
-
-        // Add click handlers
-        dropdown.querySelectorAll('.identity-option').forEach(option => {
-            option.addEventListener('click', (e) => this.selectIdentity(e));
-        });
-    }
-
-    private selectIdentity(event: Event): void {
-        const option = event.currentTarget as HTMLElement;
-        const identityId = option.getAttribute('data-identity-id');
-        
-        if (!identityId) return;
-
-        // First try to find in existing identities
-        let identity = this.allIdentities.find(i => i.id === identityId);
-        
-        // If not found, it might be a manually entered email - extract from DOM
-        if (!identity) {
-            const nameElement = option.querySelector('.identity-name');
-            const emailElement = option.querySelector('.identity-email');
-            
-            if (nameElement && emailElement) {
-                identity = {
-                    id: identityId,
-                    displayName: nameElement.textContent || identityId,
-                    uniqueName: emailElement.textContent || identityId,
-                    entityType: "User"
-                };
-                
-                // Add to allIdentities for future searches
-                this.allIdentities.push(identity);
-            }
-        }
-        
-        if (!identity) return;
-
-        // Check if already selected
-        if (this.selectedIdentities.some(i => i.id === identity.id)) {
-            return;
-        }
-
-        // Check max selections
-        if (this.selectedIdentities.length >= this.maxSelections) {
-            alert(`Maximum ${this.maxSelections} selections allowed`);
-            return;
-        }
-
-        this.selectedIdentities.push(identity);
-        this.updateSelectedDisplay();
-        this.updateFieldValue();
-        this.notifyFormChanged(); // Add form change notification
-        this.hideDropdown();
-        
-        // Clear search
-        const searchInput = document.getElementById('identity-search') as HTMLInputElement;
-        if (searchInput) {
-            searchInput.value = '';
-        }
-    }
 
     private removeIdentity(identityId: string): void {
         this.selectedIdentities = this.selectedIdentities.filter(i => i.id !== identityId);
@@ -682,32 +878,61 @@ class IdentityMultiSelectControl {
     }
 
     private updateSelectedDisplay(): void {
+        console.log('Identity Multi-Select: updateSelectedDisplay called');
+        console.log('Identity Multi-Select: selectedIdentities array:', this.selectedIdentities);
+        console.log('Identity Multi-Select: selectedIdentities count:', this.selectedIdentities.length);
+        
         const container = document.getElementById('selected-identities') as HTMLElement;
+        console.log('Identity Multi-Select: selected-identities container found:', !!container);
+        
+        if (!container) {
+            console.error('Identity Multi-Select: selected-identities container not found in DOM!');
+            return;
+        }
         
         if (this.selectedIdentities.length === 0) {
+            console.log('Identity Multi-Select: No identities to display, clearing container');
             container.innerHTML = '';
             return;
         }
 
-        container.innerHTML = this.selectedIdentities.map(identity => `
+        console.log('Identity Multi-Select: Updating display with', this.selectedIdentities.length, 'identities');
+        
+        const html = this.selectedIdentities.map(identity => {
+            const avatarInitials = this.getInitials(identity.displayName);
+            const displayName = this.escapeHtml(identity.displayName);
+            const removeBtn = !this.isReadOnly ? `<span class="remove-btn" data-identity-id="${identity.id}">×</span>` : '';
+            
+            console.log('Identity Multi-Select: Creating HTML for identity:', identity.displayName);
+            
+            return `
             <div class="selected-identity">
-                <div class="identity-avatar">${this.getInitials(identity.displayName)}</div>
-                ${this.escapeHtml(identity.displayName)}
-                ${!this.isReadOnly ? `<span class="remove-btn" data-identity-id="${identity.id}">×</span>` : ''}
-            </div>
-        `).join('');
+                <div class="identity-avatar">${avatarInitials}</div>
+                ${displayName}
+                ${removeBtn}
+            </div>`;
+        }).join('');
+
+        console.log('Identity Multi-Select: Setting container HTML:', html);
+        container.innerHTML = html;
 
         // Add remove handlers
         if (!this.isReadOnly) {
-            container.querySelectorAll('.remove-btn').forEach(btn => {
+            const removeButtons = container.querySelectorAll('.remove-btn');
+            console.log('Identity Multi-Select: Adding event handlers to', removeButtons.length, 'remove buttons');
+            
+            removeButtons.forEach(btn => {
                 btn.addEventListener('click', (e) => {
                     const identityId = (e.target as HTMLElement).getAttribute('data-identity-id');
+                    console.log('Identity Multi-Select: Remove button clicked for identity:', identityId);
                     if (identityId) {
                         this.removeIdentity(identityId);
                     }
                 });
             });
         }
+        
+        console.log('Identity Multi-Select: Display update completed');
     }
 
     private async updateFieldValue(): Promise<void> {
@@ -781,27 +1006,7 @@ class IdentityMultiSelectControl {
         }
     }
 
-    private showDropdown(): void {
-        const dropdown = document.getElementById('identity-dropdown') as HTMLElement;
-        if (dropdown) {
-            dropdown.style.display = 'block';
-        }
-    }
 
-    private hideDropdown(): void {
-        const dropdown = document.getElementById('identity-dropdown') as HTMLElement;
-        if (dropdown) {
-            dropdown.style.display = 'none';
-        }
-    }
-
-    private showDemoMode(): void {
-        this.demoMode = true;
-        const demoNotice = document.getElementById('demo-notice') as HTMLElement;
-        if (demoNotice) {
-            demoNotice.style.display = 'block';
-        }
-    }
 
     private notifyFieldChange(value: string): void {
         try {
@@ -844,6 +1049,523 @@ class IdentityMultiSelectControl {
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
+    }
+
+    private setupHiddenIdentityField(): void {
+        console.log('Identity Multi-Select: Setting up native identity field for Azure DevOps picker...');
+        
+        const nativeInput = document.getElementById('native-identity-input') as HTMLInputElement;
+        if (!nativeInput) {
+            console.warn('Identity Multi-Select: Native identity input not found');
+            return;
+        }
+
+        try {
+            // Monitor changes to the native field to detect identity selections
+            nativeInput.addEventListener('change', (e) => this.handleNativeFieldChange(e));
+            nativeInput.addEventListener('input', (e) => this.handleNativeFieldChange(e));
+            nativeInput.addEventListener('blur', (e) => this.handleNativeFieldChange(e));
+            
+            // Try to trigger Azure DevOps to enhance the field
+            setTimeout(() => {
+                console.log('Identity Multi-Select: Attempting to trigger Azure DevOps identity enhancement...');
+                
+                // Focus and blur to trigger enhancement
+                nativeInput.focus();
+                setTimeout(() => {
+                    nativeInput.blur();
+                    console.log('Identity Multi-Select: Identity field focus/blur cycle completed');
+                }, 200);
+                
+                // Try to dispatch initialization events
+                const initEvent = new CustomEvent('vss-identity-init', { bubbles: true });
+                nativeInput.dispatchEvent(initEvent);
+                
+            }, 500);
+            
+            console.log('Identity Multi-Select: Native identity field configured successfully');
+        } catch (error) {
+            console.log('Identity Multi-Select: Could not setup native identity field:', error);
+        }
+    }
+
+    private setupPickerControls(): void {
+        const searchInput = document.getElementById('identity-search-input') as HTMLInputElement;
+        const pickerButton = document.getElementById('native-picker-button') as HTMLButtonElement;
+
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => this.handleSearchInput(e));
+            searchInput.addEventListener('keydown', (e) => this.handleSearchKeydown(e));
+            
+            if (this.isReadOnly) {
+                searchInput.disabled = true;
+                searchInput.placeholder = 'Read-only';
+            }
+        }
+
+        if (pickerButton) {
+            pickerButton.addEventListener('click', () => this.openNativePicker());
+            
+            if (this.isReadOnly) {
+                pickerButton.disabled = true;
+            }
+        }
+    }
+
+    private handleNativeFieldChange(event: Event): void {
+        const nativeInput = event.target as HTMLInputElement;
+        const value = nativeInput.value.trim();
+        
+        console.log('Identity Multi-Select: Native identity field changed:', value);
+        
+        // Ignore empty values or single characters (keystrokes)
+        if (!value || value.length <= 2) {
+            return;
+        }
+        
+        // Ignore if it looks like partial typing (no complete identity format)
+        if (!this.isCompleteIdentityFormat(value)) {
+            console.log('Identity Multi-Select: Ignoring incomplete identity format:', value);
+            return;
+        }
+        
+        // Debounce the processing to avoid handling every keystroke
+        if (this.parseTimeout) {
+            clearTimeout(this.parseTimeout);
+        }
+        
+        this.parseTimeout = setTimeout(() => {
+            this.processNativeFieldValue(value, nativeInput);
+        }, 500); // Wait 500ms after user stops typing
+    }
+
+    private isCompleteIdentityFormat(value: string): boolean {
+        // Check if the value contains a complete identity format
+        // Either: "Display Name <email@domain.com>" or just "email@domain.com"
+        const emailRegex = /\S+@\S+\.\S+/;
+        const displayNameFormat = /^.+\s*<\S+@\S+\.\S+>$/;
+        
+        return emailRegex.test(value) || displayNameFormat.test(value) || 
+               value.includes(';') || value.includes(','); // Multiple identities
+    }
+
+    private processNativeFieldValue(value: string, nativeInput: HTMLInputElement): void {
+        try {
+            console.log('Identity Multi-Select: Processing native field value:', value);
+            
+            const beforeCount = this.selectedIdentities.length;
+            this.parseHiddenFieldValue(value);
+            
+            // If we successfully parsed identities, clear the native field
+            if (this.selectedIdentities.length > beforeCount) {
+                nativeInput.value = '';
+                this.updateSelectedDisplay();
+                this.updateFieldValue();
+            }
+        } catch (error) {
+            console.error('Identity Multi-Select: Error processing native field value:', error);
+        }
+    }
+
+    private parseHiddenFieldValue(value: string): void {
+        console.log('Identity Multi-Select: Parsing hidden field value:', value);
+        
+        // Azure DevOps identity fields can contain various formats
+        if (value.includes('<') && value.includes('>')) {
+            const identities = this.parseDisplayNameFormat(value);
+            identities.forEach(identity => this.addIdentityIfNotExists(identity));
+        } else if (value.startsWith('[') || value.startsWith('{')) {
+            try {
+                const parsed = JSON.parse(value);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach(item => this.addIdentityFromObject(item));
+                } else {
+                    this.addIdentityFromObject(parsed);
+                }
+            } catch (error) {
+                const identities = this.parseDisplayNameFormat(value);
+                identities.forEach(identity => this.addIdentityIfNotExists(identity));
+            }
+        } else {
+            const identities = this.parseDisplayNameFormat(value);
+            identities.forEach(identity => this.addIdentityIfNotExists(identity));
+        }
+    }
+
+    private parseDisplayNameFormat(value: string): Identity[] {
+        const identities: Identity[] = [];
+        const parts = value.split(/[;,]/).map(s => s.trim()).filter(s => s);
+        
+        for (const part of parts) {
+            const match = part.match(/^(.*?)\s*<([^>]+)>$/);
+            if (match) {
+                const displayName = match[1].trim();
+                const uniqueName = match[2].trim();
+                
+                identities.push({
+                    id: uniqueName,
+                    displayName: displayName,
+                    uniqueName: uniqueName,
+                    entityType: 'User'
+                });
+            } else if (part.includes('@')) {
+                identities.push({
+                    id: part,
+                    displayName: part,
+                    uniqueName: part,
+                    entityType: 'User'
+                });
+            } else {
+                identities.push({
+                    id: part,
+                    displayName: part,
+                    uniqueName: part,
+                    entityType: 'User'
+                });
+            }
+        }
+        
+        return identities;
+    }
+
+    private addIdentityFromObject(obj: any): void {
+        if (obj && (obj.displayName || obj.name)) {
+            const identity: Identity = {
+                id: obj.id || obj.uniqueName || obj.email || obj.displayName,
+                displayName: obj.displayName || obj.name,
+                uniqueName: obj.uniqueName || obj.email || obj.displayName,
+                entityType: obj.entityType || (obj.isGroup ? 'Group' : 'User'),
+                imageUrl: obj.imageUrl
+            };
+            
+            this.addIdentityIfNotExists(identity);
+        }
+    }
+
+    private addIdentityIfNotExists(identity: Identity): boolean {
+        if (this.selectedIdentities.some(i => i.id === identity.id || i.uniqueName === identity.uniqueName)) {
+            console.log('Identity Multi-Select: Identity already exists:', identity.displayName);
+            return false;
+        }
+        
+        if (this.selectedIdentities.length >= this.maxSelections) {
+            console.warn(`Identity Multi-Select: Maximum ${this.maxSelections} selections reached`);
+            this.showMessage(`Maximum ${this.maxSelections} selections allowed`);
+            return false;
+        }
+        
+        this.selectedIdentities.push(identity);
+        console.log('Identity Multi-Select: Added identity:', identity.displayName);
+        return true;
+    }
+
+    private showSuccessMessage(message: string): void {
+        console.log('Identity Multi-Select: Success -', message);
+        
+        // Try to show a temporary success message in the UI
+        try {
+            const container = document.querySelector('.identity-container') as HTMLElement;
+            if (container) {
+                const successDiv = document.createElement('div');
+                successDiv.style.cssText = `
+                    background-color: #d4edda;
+                    border: 1px solid #c3e6cb;
+                    color: #155724;
+                    padding: 8px 12px;
+                    border-radius: 4px;
+                    margin-bottom: 10px;
+                    font-size: 14px;
+                    position: relative;
+                `;
+                successDiv.textContent = message;
+                
+                // Insert at the top of the container
+                container.insertBefore(successDiv, container.firstChild);
+                
+                // Remove after 3 seconds
+                setTimeout(() => {
+                    if (successDiv && successDiv.parentNode) {
+                        successDiv.parentNode.removeChild(successDiv);
+                    }
+                }, 3000);
+            }
+        } catch (error) {
+            // Fallback to console only
+            console.log('Identity Multi-Select: Could not show UI message, using console only');
+        }
+    }
+
+    private openNativePicker(): void {
+        console.log('Identity Multi-Select: Focusing on native identity field...');
+        
+        const nativeInput = document.getElementById('native-identity-input') as HTMLInputElement;
+        if (nativeInput) {
+            // Clear and focus the native identity field
+            nativeInput.value = '';
+            nativeInput.focus();
+            
+            // Try to trigger dropdown if it exists
+            setTimeout(() => {
+                nativeInput.click();
+                
+                // Try to trigger identity picker dropdown
+                const keyEvent = new KeyboardEvent('keydown', {
+                    key: 'ArrowDown',
+                    code: 'ArrowDown',
+                    bubbles: true,
+                    cancelable: true
+                });
+                nativeInput.dispatchEvent(keyEvent);
+                
+                // Also try space key which sometimes triggers dropdowns
+                const spaceEvent = new KeyboardEvent('keydown', {
+                    key: ' ',
+                    code: 'Space',
+                    bubbles: true,
+                    cancelable: true
+                });
+                nativeInput.dispatchEvent(spaceEvent);
+                
+            }, 100);
+            
+            console.log('Identity Multi-Select: Native field focused and triggered');
+        } else {
+            console.warn('Identity Multi-Select: Native input not found');
+        }
+    }
+
+    private handleSearchInput(event: Event): void {
+        const input = event.target as HTMLInputElement;
+        const searchTerm = input.value.trim();
+        
+        if (searchTerm.length >= 2) {
+            console.log('Identity Multi-Select: Search input:', searchTerm);
+        }
+    }
+
+    private handleSearchKeydown(event: KeyboardEvent): void {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const input = event.target as HTMLInputElement;
+            const searchTerm = input.value.trim();
+            
+            if (searchTerm) {
+                this.addManualIdentity(searchTerm);
+                input.value = '';
+            }
+        }
+    }
+
+    private addManualIdentity(value: string): void {
+        const identities = this.parseDisplayNameFormat(value);
+        if (identities.length > 0) {
+            identities.forEach(identity => this.addIdentityIfNotExists(identity));
+            this.updateSelectedDisplay();
+            this.updateFieldValue();
+            console.log('Identity Multi-Select: Added manual identity:', value);
+        }
+    }
+
+    private showFallbackMessage(): void {
+        console.log('Identity Multi-Select: Using enhanced mode');
+        const demoNotice = document.getElementById('demo-notice') as HTMLElement;
+        if (demoNotice) {
+            demoNotice.textContent = 'Dual-field identity picker - use the identity field above to search, or add manually below.';
+            demoNotice.style.display = 'block';
+        }
+    }
+
+    private async setupIdentitySourceFieldBinding(): Promise<void> {
+        console.log('Identity Multi-Select: Setting up identity source field binding...');
+        
+        if (!this.identitySourceFieldName || !this.workItemFormService) {
+            console.warn('Identity Multi-Select: Cannot setup identity source - missing field name or service');
+            console.warn('Identity Multi-Select: identitySourceFieldName:', this.identitySourceFieldName);
+            console.warn('Identity Multi-Select: workItemFormService:', !!this.workItemFormService);
+            return;
+        }
+
+        try {
+            console.log('Identity Multi-Select: Setting up polling-based field monitoring for:', this.identitySourceFieldName);
+            
+            // Start monitoring the identity source field with polling since addFieldValueChangedListener isn't available
+            this.startFieldMonitoring();
+
+            console.log('Identity Multi-Select: Identity source field monitoring started for:', this.identitySourceFieldName);
+        } catch (error) {
+            console.error('Identity Multi-Select: Error setting up identity source field binding:', error);
+        }
+    }
+
+    private startFieldMonitoring(): void {
+        let lastValue: any = null;
+        
+        const checkFieldValue = async () => {
+            try {
+                if (!this.workItemFormService || !this.identitySourceFieldName) {
+                    return;
+                }
+
+                const currentValue = await this.workItemFormService.getFieldValue(this.identitySourceFieldName);
+                
+                // Check if value has changed and is not empty
+                if (currentValue !== lastValue && currentValue) {
+                    console.log('Identity Multi-Select: Field value changed from', lastValue, 'to', currentValue);
+                    lastValue = currentValue;
+                    await this.handleIdentitySourceFieldChange(currentValue);
+                } else if (!currentValue && lastValue) {
+                    // Field was cleared
+                    console.log('Identity Multi-Select: Field was cleared');
+                    lastValue = currentValue;
+                }
+            } catch (error) {
+                console.log('Identity Multi-Select: Error checking field value:', error);
+            }
+        };
+
+        // Check every 500ms for field changes
+        setInterval(checkFieldValue, 500);
+        
+        // Also check immediately
+        checkFieldValue();
+    }
+
+    // Manual entry controls removed since we're using native Azure DevOps identity picker
+
+    private async handleIdentitySourceFieldChange(newValue: any): Promise<void> {
+        console.log('Identity Multi-Select: Identity source field changed to:', newValue);
+        console.log('Identity Multi-Select: Value type:', typeof newValue);
+        console.log('Identity Multi-Select: Value details:', JSON.stringify(newValue, null, 2));
+        
+        if (!newValue) {
+            console.log('Identity Multi-Select: No value provided, skipping');
+            return;
+        }
+
+        try {
+            // Parse the identity value from the source field
+            let identities: Identity[] = [];
+            
+            if (typeof newValue === 'string') {
+                console.log('Identity Multi-Select: Parsing string value:', newValue);
+                // Parse string representation - could be various formats
+                if (newValue.includes('<') && newValue.includes('>')) {
+                    // Format: "Display Name <email@domain.com>"
+                    identities = this.parseDisplayNameFormat(newValue);
+                } else if (newValue.includes('@')) {
+                    // Format: just email
+                    identities = [{
+                        id: newValue,
+                        displayName: newValue.split('@')[0],
+                        uniqueName: newValue,
+                        entityType: 'User'
+                    }];
+                } else {
+                    // Format: just display name
+                    identities = [{
+                        id: newValue,
+                        displayName: newValue,
+                        uniqueName: newValue,
+                        entityType: 'User'
+                    }];
+                }
+            } else if (Array.isArray(newValue)) {
+                console.log('Identity Multi-Select: Parsing array value with', newValue.length, 'items');
+                // Handle array of identity objects
+                newValue.forEach((item, index) => {
+                    console.log('Identity Multi-Select: Processing array item', index, ':', item);
+                    if (item && (item.displayName || item.name || item.uniqueName || item.email)) {
+                        identities.push({
+                            id: item.id || item.uniqueName || item.email || item.displayName || item.name,
+                            displayName: item.displayName || item.name || item.uniqueName || item.email,
+                            uniqueName: item.uniqueName || item.email || item.displayName || item.name,
+                            entityType: item.entityType || (item.isGroup ? 'Group' : 'User'),
+                            imageUrl: item.imageUrl
+                        });
+                    }
+                });
+            } else if (typeof newValue === 'object' && (newValue.displayName || newValue.name || newValue.uniqueName || newValue.email)) {
+                console.log('Identity Multi-Select: Parsing object value:', newValue);
+                // Single identity object
+                identities.push({
+                    id: newValue.id || newValue.uniqueName || newValue.email || newValue.displayName || newValue.name,
+                    displayName: newValue.displayName || newValue.name || newValue.uniqueName || newValue.email,
+                    uniqueName: newValue.uniqueName || newValue.email || newValue.displayName || newValue.name,
+                    entityType: newValue.entityType || (newValue.isGroup ? 'Group' : 'User'),
+                    imageUrl: newValue.imageUrl
+                });
+            } else {
+                console.warn('Identity Multi-Select: Unrecognized value format:', newValue);
+                // Try to convert to string and parse
+                const stringValue = String(newValue);
+                if (stringValue && stringValue !== 'null' && stringValue !== 'undefined') {
+                    identities = [{
+                        id: stringValue,
+                        displayName: stringValue,
+                        uniqueName: stringValue,
+                        entityType: 'User'
+                    }];
+                }
+            }
+
+            console.log('Identity Multi-Select: Parsed', identities.length, 'identities:', identities.map(i => i.displayName));
+
+            if (identities.length === 0) {
+                console.log('Identity Multi-Select: No identities parsed from value');
+                return;
+            }
+
+            // Add the new identities
+            let addedCount = 0;
+            identities.forEach(identity => {
+                const wasAdded = this.addIdentityIfNotExists(identity);
+                if (wasAdded) addedCount++;
+            });
+
+            if (addedCount > 0) {
+                console.log('Identity Multi-Select: Added', addedCount, 'new identities');
+                
+                // Update display and save to storage field
+                this.updateSelectedDisplay();
+                await this.updateStorageField();
+
+                // Show success message
+                this.showSuccessMessage(`Added ${addedCount} identity(ies)`);
+            } else {
+                console.log('Identity Multi-Select: No new identities added (may be duplicates or at limit)');
+            }
+
+            // Clear the identity source field for next selection
+            setTimeout(async () => {
+                try {
+                    console.log('Identity Multi-Select: Clearing identity source field for next selection...');
+                    await this.workItemFormService.setFieldValue(this.identitySourceFieldName, '');
+                    console.log('Identity Multi-Select: Identity source field cleared successfully');
+                } catch (error) {
+                    console.log('Identity Multi-Select: Could not clear identity source field:', error);
+                }
+            }, 1000); // Increased timeout to ensure the selection is processed first
+
+        } catch (error) {
+            console.error('Identity Multi-Select: Error handling identity source field change:', error);
+        }
+    }
+
+    private async updateStorageField(): Promise<void> {
+        if (!this.fieldName || !this.workItemFormService) {
+            return;
+        }
+
+        try {
+            const value = this.selectedIdentities.map(identity => 
+                `${identity.displayName} <${identity.uniqueName}>`
+            ).join(this.separator + ' ');
+
+            await this.workItemFormService.setFieldValue(this.fieldName, value);
+            console.log('Identity Multi-Select: Updated storage field with:', value);
+        } catch (error) {
+            console.error('Identity Multi-Select: Error updating storage field:', error);
+        }
     }
 
     private registerControl(): void {
@@ -919,18 +1641,23 @@ class IdentityMultiSelectControl {
 }
 
 // Global variable to hold the control instance
-let identityControlInstance: IdentityMultiSelectControl;
+let identityControlInstance: IdentityMultiSelectControl | null = null;
 
-// Initialize the control when the DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
+// Initialize the control only once
+function initializeControl() {
+    if (identityControlInstance) {
+        console.log('Identity Multi-Select: Control already initialized, skipping');
+        return;
+    }
+    
+    console.log('Identity Multi-Select: Initializing control instance');
     identityControlInstance = new IdentityMultiSelectControl();
-});
+}
 
-// Also initialize if DOM is already ready
+// Initialize when DOM is ready
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-        identityControlInstance = new IdentityMultiSelectControl();
-    });
+    document.addEventListener('DOMContentLoaded', initializeControl);
 } else {
-    identityControlInstance = new IdentityMultiSelectControl();
+    // DOM is already ready
+    initializeControl();
 }

@@ -20,80 +20,27 @@
             min-height: 100px;
         }
 
-        .identity-search {
-            width: 100%;
-            padding: 8px 12px;
-            border: 1px solid #d1d5da;
-            border-radius: 4px;
-            font-size: 14px;
-            margin-bottom: 10px;
-            box-sizing: border-box;
-        }
-
-        .identity-search:focus {
-            outline: none;
-            border-color: #0078d4;
-            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.3);
-        }
-
-        .identity-dropdown {
-            position: relative;
-            display: none;
-            border: 1px solid #d1d5da;
-            border-radius: 4px;
-            background: white;
-            max-height: 200px;
-            overflow-y: auto;
-            z-index: 1000;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-
-        .identity-option {
-            padding: 8px 12px;
-            cursor: pointer;
-            border-bottom: 1px solid #f1f3f4;
+        .selected-identities {
+            margin-top: 10px;
             display: flex;
-            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+            min-height: 40px;
         }
 
-        .identity-option:hover {
-            background-color: #f1f3f4;
-        }
-
-        .identity-option:last-child {
-            border-bottom: none;
-        }
-
-        .identity-avatar {
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            margin-right: 8px;
-            background-color: #0078d4;
-            color: white;
+        .selected-identities:empty::after {
+            content: "No users selected yet. Use your Identity Source Field to add users.";
+            color: #666;
+            font-style: italic;
+            font-size: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 12px;
-            font-weight: bold;
-        }
-
-        .identity-info {
-            flex: 1;
-        }
-
-        .identity-name {
-            font-weight: 500;
-            font-size: 14px;
-        }
-
-        .identity-email {
-            font-size: 12px;
-            color: #666;
-        }
-
-        .selected-identities {
-            margin-top: 10px;
+            height: 40px;
+            background-color: #f8f9fa;
+            border: 1px dashed #d1d5da;
+            border-radius: 4px;
+            padding: 10px;
         }
 
         .selected-identity {
@@ -107,11 +54,30 @@
             font-size: 12px;
         }
 
+        .identity-avatar {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            margin-right: 6px;
+            background-color: #0078d4;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            font-weight: bold;
+        }
+
         .selected-identity .remove-btn {
             margin-left: 6px;
             cursor: pointer;
             color: #666;
             font-weight: bold;
+            background: none;
+            border: none;
+            font-size: 14px;
+            line-height: 1;
+            padding: 0;
         }
 
         .selected-identity .remove-btn:hover {
@@ -124,13 +90,6 @@
             color: #666;
         }
 
-        .no-results {
-            text-align: center;
-            padding: 20px;
-            color: #666;
-            font-style: italic;
-        }
-
         .demo-mode {
             background-color: #fff3cd;
             border: 1px solid #ffeaa7;
@@ -140,23 +99,24 @@
             font-size: 12px;
             color: #856404;
         }
+
+        .identity-section-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #323130;
+        }
     </style>
 </head>
 <body>
     <div id="identity-control">
         <div class="identity-container">
             <div id="demo-notice" class="demo-mode" style="display: none;">
-                Demo in actual Azure DevOps, this will search real users and groups.
+                ✅ Identity integration active: Use your Identity Source Field to select users. Selected identities appear below automatically.
             </div>
             
-            <input type="text" 
-                   id="identity-search" 
-                   class="identity-search" 
-                   placeholder="Search for users or groups..."
-                   autocomplete="off" />
+            <div class="identity-section-title">Selected Users and Groups:</div>
             
-            <div id="identity-dropdown" class="identity-dropdown"></div>
-            
+            <!-- Display selected identities -->
             <div id="selected-identities" class="selected-identities"></div>
         </div>
     </div>
