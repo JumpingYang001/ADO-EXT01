@@ -616,6 +616,19 @@ class CascadingMultiSelectControl {
   private render(): void {
     if (!this.container) return;
 
+    // If popup is active, only update the selected values section to avoid destroying popup
+    if (this.popupActive) {
+      console.log('Popup is active - updating only selected values section');
+      const selectedValuesContainer = this.container.querySelector('.selected-values');
+      if (selectedValuesContainer) {
+        selectedValuesContainer.outerHTML = this.renderSelectedValues();
+        // DON'T re-attach event listeners since that would destroy the container DOM element
+        // and invalidate popup references
+        console.log('Skipped attachEventListeners() to preserve popup references');
+      }
+      return;
+    }
+
     const html = `
       <div class="control-title">Cascading Multi-Select</div>
       <div class="control-info">Field: ${this.fieldName} | Parent Selectable: ${this.configuration.parentSelectMode ? 'Yes' : 'No'}</div>
@@ -747,7 +760,15 @@ class CascadingMultiSelectControl {
       if (target.dataset.action === 'toggle-tree') {
         e.stopPropagation(); // Prevent this click from reaching document level
         console.log('Stopping propagation for toggle-tree click');
-        this.toggleTreeVisibility();
+        
+        // If popup is currently visible, close it; otherwise open it
+        if (this.treeVisible && this.popupActive) {
+          console.log('Popup is visible, closing it');
+          this.hideTreePopup();
+        } else {
+          console.log('Popup not visible, opening it');
+          this.toggleTreeVisibility();
+        }
       }
     });
   }
@@ -1059,6 +1080,13 @@ class CascadingMultiSelectControl {
 
   private hideTreePopup(): void {
     console.log('hideTreePopup called - checking if popup actually needs to be hidden');
+    console.log('Call stack:', new Error().stack);
+    
+    // Early exit if already hidden
+    if (!this.treeVisible && !this.popupActive) {
+      console.log('hideTreePopup called but already hidden');
+      return;
+    }
     
     const popup = (this.container as any).popupElement;
     const backdrop = (this.container as any).popupBackdrop;
