@@ -804,8 +804,19 @@ class CascadingMultiSelectControl {
     popup.innerHTML = this.renderTreeItems(this.data, 0);
     document.body.appendChild(popup);
 
-    // Position popup relative to trigger
+    // Pre-calculate height constraints to ensure popup fits within viewport
     const triggerRect = trigger.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const spaceBelow = viewportHeight - (triggerRect.bottom + 4);
+    const maxHeight = Math.max(60, Math.min(120, spaceBelow - 15)); // Conservative with 15px margin
+    
+    popup.style.maxHeight = `${maxHeight}px`;
+    popup.style.overflowY = 'auto';
+    popup.style.height = 'auto';
+    
+    console.log(`Pre-set popup maxHeight: ${maxHeight}px (spaceBelow: ${spaceBelow}px)`);
+
+    // Position popup relative to trigger
     console.log('Trigger position:', {
       left: triggerRect.left,
       top: triggerRect.top,
@@ -817,28 +828,42 @@ class CascadingMultiSelectControl {
     popup.style.position = 'fixed';
     popup.style.left = `${triggerRect.left}px`;
     popup.style.top = `${triggerRect.bottom + 4}px`;
-    popup.style.zIndex = '10000';
+    popup.style.zIndex = '999999';
     
     console.log('Popup positioned at:', {
       left: popup.style.left,
-      top: popup.style.top
+      top: popup.style.top,
+      zIndex: popup.style.zIndex
     });
 
     // Also check computed styles
     setTimeout(() => {
       const computedStyle = window.getComputedStyle(popup);
+      const finalRect = popup.getBoundingClientRect();
       console.log('Popup computed position:', {
         position: computedStyle.position,
         left: computedStyle.left,
         top: computedStyle.top,
         zIndex: computedStyle.zIndex
       });
+      console.log('Popup final position:', {
+        left: finalRect.left,
+        top: finalRect.top,
+        right: finalRect.right,
+        bottom: finalRect.bottom,
+        width: finalRect.width,
+        height: finalRect.height
+      });
+      console.log('Popup is fully visible:', {
+        withinViewport: finalRect.bottom <= window.innerHeight && finalRect.right <= window.innerWidth,
+        viewportHeight: window.innerHeight,
+        popupBottom: finalRect.bottom
+      });
     }, 100);
 
     // Adjust position if popup goes off screen
     const popupRect = popup.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
     
     console.log('Viewport size:', { width: viewportWidth, height: viewportHeight });
     console.log('Popup size:', { width: popupRect.width, height: popupRect.height });
@@ -849,19 +874,13 @@ class CascadingMultiSelectControl {
       console.log('Adjusted left position to avoid overflow:', popup.style.left);
     }
 
+    // Height adjustment was already done above, so we should be good
     if (popupRect.bottom > viewportHeight) {
-      // Instead of moving above, reduce the height and keep it below
-      const availableHeight = viewportHeight - (triggerRect.bottom + 4) - 20; // 20px margin
-      if (availableHeight > 100) { // Minimum usable height
-        popup.style.maxHeight = `${availableHeight}px`;
-        popup.style.overflowY = 'auto';
-        console.log('Adjusted popup height to fit viewport:', availableHeight + 'px');
-      } else {
-        // If really no space below, keep it below but make it smaller
-        popup.style.maxHeight = '100px';
-        popup.style.overflowY = 'auto';
-        console.log('Limited popup height due to space constraints: 100px');
-      }
+      console.log('Warning: Popup still extends beyond viewport despite height adjustment');
+      // As a last resort, reduce height even more
+      const finalMaxHeight = Math.max(50, viewportHeight - (triggerRect.bottom + 4) - 5);
+      popup.style.maxHeight = `${finalMaxHeight}px`;
+      console.log(`Emergency height adjustment: ${finalMaxHeight}px`);
     }
 
     // Add event listeners for the popup
