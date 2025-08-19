@@ -29,6 +29,7 @@ class CascadingMultiSelectControl {
   private workItemFormService: any;
   private fieldName!: string;
   private instanceId: string;
+  private treeVisible: boolean = false;
 
   constructor(containerId?: string) {
     console.log('CascadingMultiSelectControl constructor called');
@@ -617,14 +618,16 @@ class CascadingMultiSelectControl {
     const html = `
       <div class="control-title">Cascading Multi-Select</div>
       <div class="control-info">Field: ${this.fieldName} | Parent Selectable: ${this.configuration.parentSelectMode ? 'Yes' : 'No'}</div>
-      <div class="tree-container">
-        ${this.renderTreeItems(this.data, 0)}
-      </div>
       ${this.renderSelectedValues()}
     `;
 
     this.container.innerHTML = html;
     this.attachEventListeners();
+
+    // If tree should be visible, create and position the popup
+    if (this.treeVisible) {
+      this.showTreePopup();
+    }
   }
 
   private renderTreeItems(items: HierarchicalItem[], level: number): string {
@@ -666,15 +669,19 @@ class CascadingMultiSelectControl {
     const selectedItems = Array.from(this.selectedValues);
     
     if (selectedItems.length === 0) {
-      return '<div class="selected-values"><div class="selected-title">No items selected</div></div>';
+      return `
+        <div class="selected-values">
+          <div class="selected-title">Selected Items:</div>
+          <div class="no-selection" data-action="toggle-tree">No selection made</div>
+        </div>
+      `;
     }
 
     const renderedItems = selectedItems.map(id => {
       const itemName = this.getItemName(id);
       return `
         <div class="selected-item">
-          ${itemName}
-          <button class="remove-button" data-item-id="${id}">×</button>
+          ${itemName}<button class="remove-button" data-item-id="${id}">×</button>
         </div>
       `;
     }).join('');
@@ -684,6 +691,7 @@ class CascadingMultiSelectControl {
         <div class="selected-title">Selected Items (${selectedItems.length}):</div>
         <div class="selected-list">
           ${renderedItems}
+          <button class="add-button" data-action="toggle-tree">+</button>
         </div>
       </div>
     `;
@@ -734,10 +742,232 @@ class CascadingMultiSelectControl {
           this.render();
         }
       }
+
+      if (target.dataset.action === 'toggle-tree') {
+        this.toggleTreeVisibility();
+      }
+    });
+  }
+
+  private toggleExpanded(itemId: string): void {
+    console.log('toggleExpanded called for:', itemId);
+    if (this.expandedItems.has(itemId)) {
+      this.expandedItems.delete(itemId);
+      console.log('Collapsing item:', itemId);
+    } else {
+      this.expandedItems.add(itemId);
+      console.log('Expanding item:', itemId);
+    }
+    
+    // Since we only support popup tree, just update the popup
+    const popup = (this.container as any).popupElement;
+    console.log('toggleExpanded - popup exists:', !!popup);
+    console.log('toggleExpanded - treeVisible:', this.treeVisible);
+    
+    if (popup) {
+      // Force update even if treeVisible is false, since popup exists
+      console.log('Updating popup content from toggleExpanded');
+      this.updatePopupContent(popup);
+    } else {
+      console.log('Cannot update popup - no popup element found');
+    }
+  }
+
+  private toggleTreeVisibility(): void {
+    this.treeVisible = !this.treeVisible;
+    if (this.treeVisible) {
+      // Don't call render() here, just show the popup directly
+      this.showTreePopup();
+    } else {
+      this.hideTreePopup();
+    }
+  }
+
+  private showTreePopup(): void {
+    // Remove any existing popup
+    this.hideTreePopup();
+
+    const addButton = this.container.querySelector('.add-button') as HTMLElement;
+    const noSelection = this.container.querySelector('.no-selection') as HTMLElement;
+    const trigger = addButton || noSelection;
+
+    if (!trigger) return;
+
+    // Create backdrop
+    const backdrop = document.createElement('div');
+    backdrop.className = 'popup-backdrop';
+    document.body.appendChild(backdrop);
+
+    // Create popup
+    const popup = document.createElement('div');
+    popup.className = 'tree-popup';
+    popup.innerHTML = this.renderTreeItems(this.data, 0);
+    document.body.appendChild(popup);
+
+    // Position popup relative to trigger
+    const triggerRect = trigger.getBoundingClientRect();
+    console.log('Trigger position:', {
+      left: triggerRect.left,
+      top: triggerRect.top,
+      bottom: triggerRect.bottom,
+      right: triggerRect.right
     });
 
-    // Checkbox changes
-    this.container.addEventListener('change', (e) => {
+    // Use setAttribute to force the positioning with !important via CSS
+    popup.style.position = 'fixed';
+    popup.style.left = `${triggerRect.left}px`;
+    popup.style.top = `${triggerRect.bottom + 4}px`;
+    popup.style.zIndex = '10000';
+    
+    console.log('Popup positioned at:', {
+      left: popup.style.left,
+      top: popup.style.top
+    });
+
+    // Also check computed styles
+    setTimeout(() => {
+      const computedStyle = window.getComputedStyle(popup);
+      console.log('Popup computed position:', {
+        position: computedStyle.position,
+        left: computedStyle.left,
+        top: computedStyle.top,
+        zIndex: computedStyle.zIndex
+      });
+    }, 100);
+
+    // Adjust position if popup goes off screen
+    const popupRect = popup.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    
+    console.log('Viewport size:', { width: viewportWidth, height: viewportHeight });
+    console.log('Popup size:', { width: popupRect.width, height: popupRect.height });
+
+    if (popupRect.right > viewportWidth) {
+      const newLeft = triggerRect.right - popupRect.width;
+      popup.style.left = `${newLeft}px`;
+      console.log('Adjusted left position to avoid overflow:', popup.style.left);
+    }
+
+    if (popupRect.bottom > viewportHeight) {
+      // Instead of moving above, reduce the height and keep it below
+      const availableHeight = viewportHeight - (triggerRect.bottom + 4) - 20; // 20px margin
+      if (availableHeight > 100) { // Minimum usable height
+        popup.style.maxHeight = `${availableHeight}px`;
+        popup.style.overflowY = 'auto';
+        console.log('Adjusted popup height to fit viewport:', availableHeight + 'px');
+      } else {
+        // If really no space below, keep it below but make it smaller
+        popup.style.maxHeight = '100px';
+        popup.style.overflowY = 'auto';
+        console.log('Limited popup height due to space constraints: 100px');
+      }
+    }
+
+    // Add event listeners for the popup
+    this.attachPopupEventListeners(popup);
+
+    // Add backdrop click listener to close popup
+    const backdropClickHandler = (e: Event) => {
+      if (e.target === backdrop) {
+        this.hideTreePopup();
+      }
+    };
+    backdrop.addEventListener('click', backdropClickHandler);
+
+    // Add document click listener to close popup when clicking outside
+    const documentClickHandler = (e: Event) => {
+      if (!popup.contains(e.target as Node) && !trigger.contains(e.target as Node)) {
+        this.hideTreePopup();
+      }
+    };
+    document.addEventListener('click', documentClickHandler);
+
+    // Store popup reference and handlers for cleanup
+    (this.container as any).popupElement = popup;
+    (this.container as any).popupBackdrop = backdrop;
+    (this.container as any).backdropClickHandler = backdropClickHandler;
+    (this.container as any).documentClickHandler = documentClickHandler;
+    
+    // Set treeVisible to true after popup is created
+    this.treeVisible = true;
+  }
+
+  private hideTreePopup(): void {
+    const popup = (this.container as any).popupElement;
+    const backdrop = (this.container as any).popupBackdrop;
+    const backdropClickHandler = (this.container as any).backdropClickHandler;
+    const documentClickHandler = (this.container as any).documentClickHandler;
+
+    if (popup) {
+      popup.remove();
+      delete (this.container as any).popupElement;
+    }
+
+    if (backdrop) {
+      if (backdropClickHandler) {
+        backdrop.removeEventListener('click', backdropClickHandler);
+      }
+      backdrop.remove();
+      delete (this.container as any).popupBackdrop;
+    }
+
+    if (documentClickHandler) {
+      document.removeEventListener('click', documentClickHandler);
+      delete (this.container as any).documentClickHandler;
+    }
+
+    delete (this.container as any).backdropClickHandler;
+    console.log('hideTreePopup called - setting treeVisible to false');
+    this.treeVisible = false;
+  }
+
+  private updatePopupContent(popup: HTMLElement): void {
+    console.log('Updating popup content...');
+    console.log('Current expanded items before update:', Array.from(this.expandedItems));
+    
+    // Store current scroll position
+    const scrollTop = popup.scrollTop;
+    
+    // Update content - this automatically removes old event listeners
+    const newContent = this.renderTreeItems(this.data, 0);
+    console.log('Generated content preview:', newContent.substring(0, 200) + '...');
+    popup.innerHTML = newContent;
+    
+    // Force a reflow to ensure DOM updates are applied
+    popup.offsetHeight;
+    
+    // Restore scroll position
+    popup.scrollTop = scrollTop;
+    
+    console.log('Popup content updated - event listeners are already delegated, no need to re-attach');
+  }
+
+  private attachPopupEventListeners(popup: HTMLElement): void {
+    console.log('Attaching popup event listeners...');
+    
+    // Use event delegation - attach listeners only once to the popup container
+    // These will work even when innerHTML is updated
+    
+    // Handle all clicks in the popup
+    popup.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      
+      // Stop propagation to prevent closing
+      e.stopPropagation();
+      
+      if (target.classList.contains('expand-button')) {
+        e.preventDefault();
+        const itemId = target.dataset.itemId;
+        if (itemId) {
+          console.log('Expand button clicked in popup for item:', itemId);
+          this.toggleExpanded(itemId);
+        }
+      }
+    });
+
+    // Handle checkbox changes
+    popup.addEventListener('change', (e) => {
       const target = e.target as HTMLInputElement;
       
       if (target.classList.contains('item-checkbox')) {
@@ -748,21 +978,18 @@ class CascadingMultiSelectControl {
           } else {
             this.selectedValues.delete(itemId);
           }
+          
           this.updateFieldValue();
-          this.render();
+          
+          // Update the main view to show selected items
+          const selectedValuesContainer = this.container.querySelector('.selected-values');
+          if (selectedValuesContainer) {
+            selectedValuesContainer.outerHTML = this.renderSelectedValues();
+            this.attachEventListeners();
+          }
         }
       }
     });
-  }
-
-  private toggleExpanded(itemId: string): void {
-    if (this.expandedItems.has(itemId)) {
-      this.expandedItems.delete(itemId);
-    } else {
-      this.expandedItems.add(itemId);
-    }
-    
-    this.render();
   }
 
   private renderError(message: string): void {
