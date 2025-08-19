@@ -648,8 +648,9 @@ class CascadingMultiSelectControl {
       if (selectedValuesContainer) {
         selectedValuesContainer.outerHTML = this.renderSelectedValues();
         // DON'T re-attach event listeners since that would destroy the container DOM element
-        // and invalidate popup references
-        console.log('Skipped attachEventListeners() to preserve popup references');
+        // and invalidate popup references - we'll attach them to the new selected values section only
+        this.attachSelectedValuesEventListeners();
+        console.log('Updated selected values and attached listeners to new elements only');
       }
       return;
     }
@@ -753,14 +754,67 @@ class CascadingMultiSelectControl {
     return findItem(this.data) || id;
   }
 
+  private attachSelectedValuesEventListeners(): void {
+    if (!this.container) return;
+
+    // Attach event listeners only to the selected values section
+    const selectedValuesContainer = this.container.querySelector('.selected-values');
+    if (!selectedValuesContainer) return;
+
+    // Remove button clicks
+    selectedValuesContainer.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      
+      if (target.classList.contains('remove-button')) {
+        const itemId = target.dataset.itemId;
+        if (itemId) {
+          this.selectedValues.delete(itemId);
+          this.updateFieldValue();
+          this.render();
+        }
+      }
+
+      if (target.dataset.action === 'toggle-tree') {
+        e.stopPropagation(); // Prevent this click from reaching document level
+        console.log('Stopping propagation for toggle-tree click');
+        
+        // If popup is currently visible, close it; otherwise open it
+        if (this.treeVisible && this.popupActive) {
+          console.log('Popup is visible, closing it');
+          this.hideTreePopup();
+          console.log('hideTreePopup called from toggleTreeVisibility (close branch)');
+        } else {
+          console.log('Popup not visible, opening it');
+          this.toggleTreeVisibility();
+        }
+      }
+    });
+  }
+
   private attachEventListeners(): void {
     if (!this.container) return;
+
+    // Store popup references before cloning to preserve them
+    const popupElement = (this.container as any).popupElement;
+    const popupBackdrop = (this.container as any).popupBackdrop;
+    const popupContainer = (this.container as any).popupContainer;
+    const popupCreatedTime = (this.container as any).popupCreatedTime;
+    const backdropClickHandler = (this.container as any).backdropClickHandler;
+    const documentClickHandler = (this.container as any).documentClickHandler;
 
     // Remove existing event listeners to avoid duplicates
     // Clone the container to remove all event listeners
     const newContainer = this.container.cloneNode(true) as HTMLElement;
     this.container.parentNode?.replaceChild(newContainer, this.container);
     this.container = newContainer;
+
+    // Restore popup references after cloning
+    if (popupElement) (this.container as any).popupElement = popupElement;
+    if (popupBackdrop) (this.container as any).popupBackdrop = popupBackdrop;
+    if (popupContainer) (this.container as any).popupContainer = popupContainer;
+    if (popupCreatedTime) (this.container as any).popupCreatedTime = popupCreatedTime;
+    if (backdropClickHandler) (this.container as any).backdropClickHandler = backdropClickHandler;
+    if (documentClickHandler) (this.container as any).documentClickHandler = documentClickHandler;
 
     // Expand/collapse buttons
     this.container.addEventListener('click', (e) => {
@@ -1064,8 +1118,8 @@ class CascadingMultiSelectControl {
       // Check if a field update happened recently - ignore backdrop clicks for 1 second after field updates
       const lastFieldUpdate = this.lastFieldUpdateTime || 0;
       const timeSinceFieldUpdate = Date.now() - lastFieldUpdate;
-      console.log(`Backdrop click timestamp check: lastFieldUpdate=${lastFieldUpdate}, timeSinceFieldUpdate=${timeSinceFieldUpdate}ms, threshold=2000ms, instance:`, this.instanceId);
-      if (timeSinceFieldUpdate < 2000) { // 2000ms protection after field update
+      console.log(`Backdrop click timestamp check: lastFieldUpdate=${lastFieldUpdate}, timeSinceFieldUpdate=${timeSinceFieldUpdate}ms, threshold=1000ms, instance:`, this.instanceId);
+      if (timeSinceFieldUpdate < 1000) { // 1000ms protection after field update
         console.log(`Backdrop click ignored - field updated recently (${timeSinceFieldUpdate}ms ago)`);
         return;
       }
@@ -1104,7 +1158,7 @@ class CascadingMultiSelectControl {
       // Check if a field update happened recently - ignore clicks for a bit after field updates
       const lastFieldUpdate = this.lastFieldUpdateTime || 0;
       const timeSinceFieldUpdate = Date.now() - lastFieldUpdate;
-      if (timeSinceFieldUpdate < 2000) { // 2000ms protection after field update
+      if (timeSinceFieldUpdate < 1000) { // 1000ms protection after field update
         console.log(`Document click ignored - field updated recently (${timeSinceFieldUpdate}ms ago) for ${this.instanceId}`);
         return;
       }
@@ -1178,6 +1232,7 @@ class CascadingMultiSelectControl {
       return;
     }
     
+    // Get references BEFORE clearing them
     const popup = (this.container as any).popupElement;
     const backdrop = (this.container as any).popupBackdrop;
     const popupContainer = (this.container as any).popupContainer;
@@ -1197,21 +1252,18 @@ class CascadingMultiSelectControl {
     this.treeVisible = false;
     this.popupActive = false;
 
-    // Clear references immediately to prevent stale access
-    delete (this.container as any).popupElement;
-    delete (this.container as any).popupBackdrop;
-    delete (this.container as any).popupContainer;
-    delete (this.container as any).popupCreatedTime;
-    delete (this.container as any).backdropClickHandler;
-    delete (this.container as any).documentClickHandler;
-    delete (this.container as any).backdropHandlerDisabled; // Clean up backdrop handler state
-
+    // Remove event listeners FIRST, while we still have references
     if (documentClickHandler) {
       document.removeEventListener('click', documentClickHandler);
       console.log('Removed document click listener for control', this.instanceId);
     }
 
-    // Remove the entire popup container (which contains both popup and backdrop)
+    if (backdrop && backdropClickHandler) {
+      backdrop.removeEventListener('click', backdropClickHandler);
+      console.log('Removed backdrop click listener');
+    }
+
+    // Remove DOM elements
     if (popupContainer) {
       console.log('Removing popup container for control', this.instanceId);
       popupContainer.remove();
@@ -1223,13 +1275,19 @@ class CascadingMultiSelectControl {
       }
       
       if (backdrop) {
-        if (backdropClickHandler) {
-          backdrop.removeEventListener('click', backdropClickHandler);
-        }
         console.log('Removing backdrop from DOM');
         backdrop.remove();
       }
     }
+
+    // Clear references AFTER cleanup is complete
+    delete (this.container as any).popupElement;
+    delete (this.container as any).popupBackdrop;
+    delete (this.container as any).popupContainer;
+    delete (this.container as any).popupCreatedTime;
+    delete (this.container as any).backdropClickHandler;
+    delete (this.container as any).documentClickHandler;
+    delete (this.container as any).backdropHandlerDisabled; // Clean up backdrop handler state
     
     // Additional fallback: search for any remaining popup elements for this control instance
     const orphanedBackdrops = document.querySelectorAll(`.popup-backdrop[data-control-id="${this.instanceId}"]`);
