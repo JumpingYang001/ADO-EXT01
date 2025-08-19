@@ -31,6 +31,7 @@ class CascadingMultiSelectControl {
   private instanceId: string;
   private treeVisible: boolean = false;
   private popupActive: boolean = false;
+  private lastFieldUpdateTime: number = 0;
 
   constructor(containerId?: string) {
     console.log('CascadingMultiSelectControl constructor called');
@@ -190,6 +191,25 @@ class CascadingMultiSelectControl {
         
         onFieldChanged: (args: any) => {
           console.log(`Field changed for instance ${this.instanceId}:`, args);
+          
+          // Only process field changes that are relevant to THIS control instance
+          if (args && args.changedFields && this.fieldName) {
+            const hasRelevantChange = Object.keys(args.changedFields).some(fieldName => 
+              fieldName === this.fieldName || 
+              fieldName.toLowerCase() === this.fieldName.toLowerCase()
+            );
+            
+            if (hasRelevantChange) {
+              console.log(`Processing relevant field change for ${this.instanceId}, field: ${this.fieldName}`);
+              // Reload the current value to stay in sync with work item
+              this.loadCurrentValue().catch(error => {
+                console.error(`Error reloading field value for ${this.instanceId}:`, error);
+              });
+            } else {
+              console.log(`Ignoring field change for ${this.instanceId} - not relevant to field ${this.fieldName}`);
+            }
+          }
+          
           // Handle field change events if needed
         },
         
@@ -605,6 +625,11 @@ class CascadingMultiSelectControl {
         const newValue = Array.from(this.selectedValues).join(this.configuration.multiSelectSeparator);
         console.log(`Updating field ${this.fieldName} (instance ${this.instanceId}) to:`, newValue);
         
+        // Set a timestamp to ignore backdrop clicks temporarily after field update
+        const timestamp = Date.now();
+        this.lastFieldUpdateTime = timestamp; // Store on instance instead of DOM element
+        console.log(`Field update timestamp set for ${this.instanceId}: ${timestamp} on instance`);
+        
         await this.workItemFormService.setFieldValue(this.fieldName, newValue);
         console.log(`Field value updated successfully for instance ${this.instanceId}`);
       }
@@ -765,6 +790,7 @@ class CascadingMultiSelectControl {
         if (this.treeVisible && this.popupActive) {
           console.log('Popup is visible, closing it');
           this.hideTreePopup();
+          console.log('hideTreePopup called from toggleTreeVisibility (close branch)');
         } else {
           console.log('Popup not visible, opening it');
           this.toggleTreeVisibility();
@@ -827,6 +853,7 @@ class CascadingMultiSelectControl {
 
   private showTreePopup(): void {
     // Remove any existing popup
+    console.log('hideTreePopup called from showTreePopup (cleanup existing)');
     this.hideTreePopup();
 
     const addButton = this.container.querySelector('.add-button') as HTMLElement;
@@ -840,6 +867,8 @@ class CascadingMultiSelectControl {
     if (!popupContainer) {
       popupContainer = document.createElement('div');
       popupContainer.id = `popup-container-${this.instanceId}`;
+      popupContainer.className = 'popup-container';
+      popupContainer.setAttribute('data-control-id', this.instanceId);
       popupContainer.style.cssText = `
         position: fixed;
         top: 0;
@@ -856,12 +885,14 @@ class CascadingMultiSelectControl {
     // Create backdrop
     const backdrop = document.createElement('div');
     backdrop.className = 'popup-backdrop';
+    backdrop.setAttribute('data-control-id', this.instanceId);
     backdrop.style.pointerEvents = 'auto'; // Enable clicks on backdrop
     popupContainer.appendChild(backdrop);
 
     // Create popup
     const popup = document.createElement('div');
     popup.className = 'tree-popup';
+    popup.setAttribute('data-control-id', this.instanceId);
     popup.innerHTML = this.renderTreeItems(this.data, 0);
     popup.style.pointerEvents = 'auto'; // Enable clicks on popup content
     popupContainer.appendChild(popup);
@@ -998,11 +1029,54 @@ class CascadingMultiSelectControl {
 
     // Add backdrop click listener to close popup
     const backdropClickHandler = (e: Event) => {
-      if (e.target === backdrop) {
-        this.hideTreePopup();
+      console.log('Backdrop click detected, checking if it should close popup');
+      console.log('Backdrop click target:', (e.target as any).tagName, (e.target as any).className);
+      console.log('Backdrop click currentTarget:', (e.currentTarget as any).tagName, (e.currentTarget as any).className);
+      console.log('Backdrop click event details:', {
+        type: e.type,
+        bubbles: e.bubbles,
+        cancelable: e.cancelable,
+        defaultPrevented: e.defaultPrevented,
+        eventPhase: e.eventPhase,
+        isTrusted: e.isTrusted,
+        timeStamp: e.timeStamp
+      });
+      
+      // CRITICAL: Check if this is a synthetic/untrusted event
+      if (!e.isTrusted) {
+        console.log('Backdrop click IGNORED - synthetic/untrusted event detected');
+        return;
       }
+      
+      // Only close if the click was directly on the backdrop, not on popup content
+      if (e.target !== backdrop) {
+        console.log('Backdrop click ignored - click was not directly on backdrop');
+        return;
+      }
+      
+      // Check if popup was just created (add grace period to avoid immediate closure)
+      const popupAge = Date.now() - ((this.container as any).popupCreatedTime || 0);
+      if (popupAge < 200) { // 200ms grace period
+        console.log(`Backdrop click ignored - popup too new (${popupAge}ms)`);
+        return;
+      }
+      
+      // Check if a field update happened recently - ignore backdrop clicks for 1 second after field updates
+      const lastFieldUpdate = this.lastFieldUpdateTime || 0;
+      const timeSinceFieldUpdate = Date.now() - lastFieldUpdate;
+      console.log(`Backdrop click timestamp check: lastFieldUpdate=${lastFieldUpdate}, timeSinceFieldUpdate=${timeSinceFieldUpdate}ms, threshold=2000ms, instance:`, this.instanceId);
+      if (timeSinceFieldUpdate < 2000) { // 2000ms protection after field update
+        console.log(`Backdrop click ignored - field updated recently (${timeSinceFieldUpdate}ms ago)`);
+        return;
+      }
+      
+      console.log('hideTreePopup called from backdrop click');
+      // Stop propagation to prevent document click handler from also firing
+      e.stopPropagation();
+      e.preventDefault();
+      this.hideTreePopup();
     };
-    backdrop.addEventListener('click', backdropClickHandler);
+    backdrop.addEventListener('click', backdropClickHandler, true); // Use capture phase to intercept early
 
     // Add document click listener to close popup when clicking outside
     // Create document click handler that only responds to THIS control's events
@@ -1012,24 +1086,39 @@ class CascadingMultiSelectControl {
       
       console.log('Document click handler fired for control', this.instanceId, 
                   'target:', (target as any).tagName, (target as any).className,
-                  'coordinates:', clickEvent.clientX, clickEvent.clientY);
+                  'coordinates:', clickEvent.clientX, clickEvent.clientY,
+                  'isTrusted:', e.isTrusted);
+      
+      // CRITICAL: Check if this is a synthetic/untrusted event
+      if (!e.isTrusted) {
+        console.log(`Document click IGNORED - synthetic/untrusted event detected for ${this.instanceId}`);
+        return;
+      }
       
       // Only handle clicks if this control's popup is active
       if (!this.popupActive) {
-        console.log('Popup not active, ignoring document click');
+        console.log(`Popup not active for ${this.instanceId}, ignoring document click`);
+        return;
+      }
+      
+      // Check if a field update happened recently - ignore clicks for a bit after field updates
+      const lastFieldUpdate = this.lastFieldUpdateTime || 0;
+      const timeSinceFieldUpdate = Date.now() - lastFieldUpdate;
+      if (timeSinceFieldUpdate < 2000) { // 2000ms protection after field update
+        console.log(`Document click ignored - field updated recently (${timeSinceFieldUpdate}ms ago) for ${this.instanceId}`);
         return;
       }
       
       // Check if popup was just created (add grace period to avoid immediate closure)
       const popupAge = Date.now() - ((this.container as any).popupCreatedTime || 0);
-      if (popupAge < 200) { // Increased to 200ms grace period
-        console.log(`Popup too new (${popupAge}ms), ignoring document click`);
+      if (popupAge < 200) { // 200ms grace period
+        console.log(`Popup too new (${popupAge}ms), ignoring document click for ${this.instanceId}`);
         return;
       }
       
       // Ignore clicks that don't have proper mouse coordinates (likely synthetic/programmatic)
       if (clickEvent.clientX === 0 && clickEvent.clientY === 0) {
-        console.log('Ignoring synthetic click event (0,0 coordinates)');
+        console.log(`Ignoring synthetic click event (0,0 coordinates) for ${this.instanceId}`);
         return;
       }
       
@@ -1053,6 +1142,7 @@ class CascadingMultiSelectControl {
       
       // Click is outside both popup and trigger - close popup
       console.log(`Document click detected outside control ${this.instanceId} - hiding popup`);
+      console.log('hideTreePopup called from document click handler');
       this.hideTreePopup();
     };
     
@@ -1094,15 +1184,18 @@ class CascadingMultiSelectControl {
     const backdropClickHandler = (this.container as any).backdropClickHandler;
     const documentClickHandler = (this.container as any).documentClickHandler;
     
-    // Only set flags to false if popup actually exists and will be removed
-    if (popup || backdrop) {
-      console.log('Setting treeVisible and popupActive to false - popup will be removed');
-      this.treeVisible = false;
-      this.popupActive = false;
-    } else {
-      console.log('hideTreePopup called but no popup to hide - keeping flags unchanged');
-      return; // Nothing to hide, keep current state
-    }
+    console.log('hideTreePopup - DOM references:', {
+      popup: !!popup,
+      backdrop: !!backdrop,
+      popupContainer: !!popupContainer,
+      backdropClickHandler: !!backdropClickHandler,
+      documentClickHandler: !!documentClickHandler
+    });
+    
+    // Always set flags to false when hideTreePopup is called
+    console.log('Setting treeVisible and popupActive to false');
+    this.treeVisible = false;
+    this.popupActive = false;
 
     // Clear references immediately to prevent stale access
     delete (this.container as any).popupElement;
@@ -1111,6 +1204,7 @@ class CascadingMultiSelectControl {
     delete (this.container as any).popupCreatedTime;
     delete (this.container as any).backdropClickHandler;
     delete (this.container as any).documentClickHandler;
+    delete (this.container as any).backdropHandlerDisabled; // Clean up backdrop handler state
 
     if (documentClickHandler) {
       document.removeEventListener('click', documentClickHandler);
@@ -1136,6 +1230,33 @@ class CascadingMultiSelectControl {
         backdrop.remove();
       }
     }
+    
+    // Additional fallback: search for any remaining popup elements for this control instance
+    const orphanedBackdrops = document.querySelectorAll(`.popup-backdrop[data-control-id="${this.instanceId}"]`);
+    const orphanedPopups = document.querySelectorAll(`.tree-popup[data-control-id="${this.instanceId}"]`);
+    const orphanedContainers = document.querySelectorAll(`.popup-container[data-control-id="${this.instanceId}"]`);
+    
+    console.log('Cleanup check - orphaned elements:', {
+      backdrops: orphanedBackdrops.length,
+      popups: orphanedPopups.length,
+      containers: orphanedContainers.length
+    });
+    
+    // Remove any orphaned elements
+    orphanedContainers.forEach(container => {
+      console.log('Removing orphaned popup container');
+      container.remove();
+    });
+    
+    orphanedBackdrops.forEach(backdrop => {
+      console.log('Removing orphaned backdrop');
+      backdrop.remove();
+    });
+    
+    orphanedPopups.forEach(popup => {
+      console.log('Removing orphaned popup');
+      popup.remove();
+    });
   }
 
   private updatePopupContent(popup: HTMLElement): void {
@@ -1177,11 +1298,12 @@ class CascadingMultiSelectControl {
       console.log('🔵 POPUP CLICK - Target has expand-button class:', target.classList.contains('expand-button'));
       console.log('🔵 POPUP CLICK - Data attributes:', target.dataset);
       
-      // Stop propagation to prevent closing
+      // Always stop propagation to prevent backdrop clicks
       e.stopPropagation();
       console.log('🔵 POPUP CLICK - Event propagation stopped');
       
       if (target.classList.contains('expand-button')) {
+        // Prevent default for expand buttons to avoid any form submission
         e.preventDefault();
         console.log('🔵 EXPAND BUTTON CLICK - prevented default and stopped propagation');
         
@@ -1192,8 +1314,11 @@ class CascadingMultiSelectControl {
         } else {
           console.log('🔵 EXPAND BUTTON - Warning: no itemId found');
         }
+      } else if (target.classList.contains('item-checkbox')) {
+        // Do NOT prevent default for checkboxes - let them toggle normally
+        console.log('🔵 CHECKBOX CLICK - allowing default behavior, only stopped propagation');
       } else {
-        console.log('🔵 POPUP CLICK - Not an expand button, just stopped propagation');
+        console.log('🔵 POPUP CLICK - Not an expand button or checkbox, just stopped propagation');
       }
     };
     
@@ -1206,6 +1331,12 @@ class CascadingMultiSelectControl {
     // Handle checkbox changes
     popup.addEventListener('change', (e) => {
       const target = e.target as HTMLInputElement;
+      
+      console.log('🔵 POPUP CHANGE - Element:', target.tagName, 'Class:', target.className);
+      
+      // Stop propagation to prevent backdrop clicks, but allow default checkbox behavior
+      e.stopPropagation();
+      console.log('🔵 POPUP CHANGE - Event propagation stopped');
       
       if (target.classList.contains('item-checkbox')) {
         const itemId = target.dataset.itemId;
