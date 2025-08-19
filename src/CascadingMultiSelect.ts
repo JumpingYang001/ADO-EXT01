@@ -804,17 +804,47 @@ class CascadingMultiSelectControl {
     popup.innerHTML = this.renderTreeItems(this.data, 0);
     document.body.appendChild(popup);
 
-    // Pre-calculate height constraints to ensure popup fits within viewport
+    // Pre-calculate height constraints - try to use parent window dimensions if in iframe
     const triggerRect = trigger.getBoundingClientRect();
-    const viewportHeight = window.innerHeight;
+    let viewportHeight = window.innerHeight;
+    
+    // Check if we're in an iframe and can access parent window
+    try {
+      if (window !== window.parent && window.parent && window.parent.innerHeight) {
+        const parentHeight = window.parent.innerHeight;
+        console.log(`Detected iframe - parent height: ${parentHeight}px, current height: ${viewportHeight}px`);
+        // Use parent height if it's significantly larger (suggests we're in a constrained iframe)
+        if (parentHeight > viewportHeight * 1.5) {
+          viewportHeight = parentHeight;
+          console.log(`Using parent window height: ${viewportHeight}px`);
+        }
+      }
+    } catch (e) {
+      console.log('Cannot access parent window (cross-origin), using current window height');
+    }
+    
+    // In constrained environments, be more aggressive about height
     const spaceBelow = viewportHeight - (triggerRect.bottom + 4);
-    const maxHeight = Math.max(60, Math.min(120, spaceBelow - 15)); // Conservative with 15px margin
+    const spaceAbove = triggerRect.top - 10;
+    
+    // Choose the larger available space
+    const useAbovePositioning = spaceAbove > spaceBelow && spaceAbove > 50;
+    const availableSpace = useAbovePositioning ? spaceAbove : spaceBelow;
+    
+    // Allow popup to use most of the available space, with generous height
+    const maxHeight = Math.max(80, Math.min(300, availableSpace - 15));
+    
+    if (useAbovePositioning) {
+      // Position above the trigger first
+      popup.style.top = `${triggerRect.top - maxHeight - 4}px`;
+      console.log(`Pre-positioning above trigger for better space utilization`);
+    }
     
     popup.style.maxHeight = `${maxHeight}px`;
     popup.style.overflowY = 'auto';
     popup.style.height = 'auto';
     
-    console.log(`Pre-set popup maxHeight: ${maxHeight}px (spaceBelow: ${spaceBelow}px)`);
+    console.log(`Pre-set popup maxHeight: ${maxHeight}px (spaceBelow: ${spaceBelow}px, spaceAbove: ${spaceAbove}px, viewportHeight: ${viewportHeight}px, positioned: ${useAbovePositioning ? 'above' : 'below'})`);
 
     // Position popup relative to trigger
     console.log('Trigger position:', {
@@ -827,7 +857,10 @@ class CascadingMultiSelectControl {
     // Use setAttribute to force the positioning with !important via CSS
     popup.style.position = 'fixed';
     popup.style.left = `${triggerRect.left}px`;
-    popup.style.top = `${triggerRect.bottom + 4}px`;
+    // Only set top if not already set above
+    if (!popup.style.top) {
+      popup.style.top = `${triggerRect.bottom + 4}px`;
+    }
     popup.style.zIndex = '999999';
     
     console.log('Popup positioned at:', {
@@ -874,13 +907,28 @@ class CascadingMultiSelectControl {
       console.log('Adjusted left position to avoid overflow:', popup.style.left);
     }
 
-    // Height adjustment was already done above, so we should be good
+    // Height adjustment was already done above, but check if we need alternative positioning
     if (popupRect.bottom > viewportHeight) {
       console.log('Warning: Popup still extends beyond viewport despite height adjustment');
-      // As a last resort, reduce height even more
-      const finalMaxHeight = Math.max(50, viewportHeight - (triggerRect.bottom + 4) - 5);
-      popup.style.maxHeight = `${finalMaxHeight}px`;
-      console.log(`Emergency height adjustment: ${finalMaxHeight}px`);
+      
+      // Try positioning above the trigger if there's more space there
+      const spaceAbove = triggerRect.top - 10; // 10px margin from top
+      const spaceBelowActual = viewportHeight - triggerRect.bottom - 4;
+      
+      console.log(`Space above: ${spaceAbove}px, space below: ${spaceBelowActual}px`);
+      
+      if (spaceAbove > spaceBelowActual && spaceAbove > 60) { // Lowered threshold from 100 to 60
+        // Position popup above the trigger
+        const popupHeight = Math.min(200, spaceAbove - 10);
+        popup.style.top = `${triggerRect.top - popupHeight - 4}px`;
+        popup.style.maxHeight = `${popupHeight}px`;
+        console.log(`Repositioned popup above trigger: top=${popup.style.top}, maxHeight=${popupHeight}px`);
+      } else {
+        // As a last resort, reduce height even more but keep below
+        const finalMaxHeight = Math.max(60, viewportHeight - (triggerRect.bottom + 4) - 5);
+        popup.style.maxHeight = `${finalMaxHeight}px`;
+        console.log(`Emergency height adjustment: ${finalMaxHeight}px`);
+      }
     }
 
     // Add event listeners for the popup
