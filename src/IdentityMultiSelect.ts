@@ -309,8 +309,16 @@ class IdentityMultiSelectControl {
         if (!value) return;
 
         try {
-            // Parse configurable separator-delimited identity values (semicolon or comma)
-            const identityStrings = value.split(/[;,]/).filter(s => s.trim());
+            // Parse line-separated identity values (one per line) or fallback to separator-based for backward compatibility
+            let identityStrings: string[];
+            
+            if (value.includes('\n')) {
+                // Multi-line format: split by line breaks
+                identityStrings = value.split(/\r?\n/).filter(s => s.trim());
+            } else {
+                // Fallback: split by semicolon or comma for backward compatibility
+                identityStrings = value.split(/[;,]/).filter(s => s.trim());
+            }
             
             for (const identityString of identityStrings) {
                 const identity = await this.parseIdentityString(identityString.trim());
@@ -970,23 +978,21 @@ class IdentityMultiSelectControl {
             console.log('Identity Multi-Select: Starting field update for:', this.fieldName);
             console.log('Identity Multi-Select: Selected identities:', this.selectedIdentities);
             
-            // SIMPLIFIED APPROACH: Always use string format with configurable separator
-            // This is the standard approach for Azure DevOps work item controls
-            // Supports both semicolon (default) and comma separators
+            // MULTI-LINE APPROACH: Use line-separated format for better readability
+            // Each identity on its own line in "Display Name <email>" format
             
             let value: string;
             
             if (this.selectedIdentities.length === 0) {
                 value = '';
             } else {
-                // Create configurable-separator string with identity format: "Display Name <email>"
-                const separatorString = this.separator === ',' ? ', ' : '; ';
+                // Create multi-line string with identity format: "Display Name <email>"
                 value = this.selectedIdentities
                     .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                    .join(separatorString);
+                    .join('\n');
             }
 
-            console.log('Identity Multi-Select: Setting field value:', value);
+            console.log('Identity Multi-Select: Setting field value (multi-line):', value);
             
             // Set the field value using the standard method
             await this.workItemFormService.setFieldValue(this.fieldName, value);
@@ -1557,12 +1563,13 @@ class IdentityMultiSelectControl {
         }
 
         try {
+            // Use multi-line format: one identity per line
             const value = this.selectedIdentities.map(identity => 
                 `${identity.displayName} <${identity.uniqueName}>`
-            ).join(this.separator + ' ');
+            ).join('\n');
 
             await this.workItemFormService.setFieldValue(this.fieldName, value);
-            console.log('Identity Multi-Select: Updated storage field with:', value);
+            console.log('Identity Multi-Select: Updated storage field with (multi-line):', value);
         } catch (error) {
             console.error('Identity Multi-Select: Error updating storage field:', error);
         }
@@ -1609,10 +1616,10 @@ class IdentityMultiSelectControl {
                 return '';
             }
 
-            // Use semicolon-separated format for multiple identities
+            // Use multi-line format for multiple identities
             return this.selectedIdentities
                 .map(identity => `${identity.displayName} <${identity.uniqueName}>`)
-                .join('; ');
+                .join('\n');
         } catch (error) {
             console.error('Identity Multi-Select: Error getting current field value:', error);
             return '';

@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.78",
+  "version": "1.0.83",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -86,17 +86,17 @@
       "properties": {
         "name": "Identity Multi-Select",
         "uri": "dist/IdentityMultiSelect.html",
-        "height": 120,
+        "height": 130,
         "supportedDataTypes": ["String", "Identity"],
         "canSortBy": false,
         "inputs": [
           {
             "id": "FieldName",
-            "name": "Storage Field (String)",
-            "description": "The String field to store the selected identities (with separators).",
+            "name": "Storage Field (Multi-line Text)",
+            "description": "The multi-line text field to store the selected identities (one per line).",
             "type": "WorkItemField",
             "properties": {
-              "workItemFieldTypes": ["String"]
+              "workItemFieldTypes": ["Html", "String"]
             },
             "validation": {
               "dataType": "String",
@@ -137,8 +137,8 @@
           },
           {
             "id": "separator",
-            "name": "Value Separator",
-            "description": "Separator for multiple values: semicolon (;) or comma (,) - default: semicolon",
+            "name": "Legacy Separator (Deprecated)",
+            "description": "Legacy option for backward compatibility. New installations use multi-line format.",
             "type": "string",
             "validation": {
               "dataType": "String",
