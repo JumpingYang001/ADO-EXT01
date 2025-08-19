@@ -30,6 +30,7 @@ class CascadingMultiSelectControl {
   private fieldName!: string;
   private instanceId: string;
   private treeVisible: boolean = false;
+  private popupActive: boolean = false;
 
   constructor(containerId?: string) {
     console.log('CascadingMultiSelectControl constructor called');
@@ -744,6 +745,8 @@ class CascadingMultiSelectControl {
       }
 
       if (target.dataset.action === 'toggle-tree') {
+        e.stopPropagation(); // Prevent this click from reaching document level
+        console.log('Stopping propagation for toggle-tree click');
         this.toggleTreeVisibility();
       }
     });
@@ -751,6 +754,34 @@ class CascadingMultiSelectControl {
 
   private toggleExpanded(itemId: string): void {
     console.log('toggleExpanded called for:', itemId);
+    
+    // Quick check using popup active flag
+    if (!this.popupActive) {
+      console.log('Cannot update popup - popup not active (flag check)');
+      return;
+    }
+    
+    // Check if popup is actually active and exists in DOM (check popup container, not just body)
+    const popup = (this.container as any).popupElement;
+    const popupContainer = (this.container as any).popupContainer;
+    const popupExistsInDOM = popup && (
+      document.body.contains(popup) || 
+      (popupContainer && popupContainer.contains(popup))
+    );
+    
+    console.log('toggleExpanded - popup exists:', !!popup);
+    console.log('toggleExpanded - popup container exists:', !!popupContainer);
+    console.log('toggleExpanded - popup in DOM:', popupExistsInDOM);
+    console.log('toggleExpanded - treeVisible:', this.treeVisible);
+    console.log('toggleExpanded - popupActive flag:', this.popupActive);
+    
+    // Don't process if popup doesn't exist or isn't in DOM
+    if (!popup || !popupExistsInDOM) {
+      console.log('Cannot update popup - popup not active or not in DOM');
+      this.popupActive = false; // Reset flag if popup is gone
+      return;
+    }
+    
     if (this.expandedItems.has(itemId)) {
       this.expandedItems.delete(itemId);
       console.log('Collapsing item:', itemId);
@@ -759,18 +790,8 @@ class CascadingMultiSelectControl {
       console.log('Expanding item:', itemId);
     }
     
-    // Since we only support popup tree, just update the popup
-    const popup = (this.container as any).popupElement;
-    console.log('toggleExpanded - popup exists:', !!popup);
-    console.log('toggleExpanded - treeVisible:', this.treeVisible);
-    
-    if (popup) {
-      // Force update even if treeVisible is false, since popup exists
-      console.log('Updating popup content from toggleExpanded');
-      this.updatePopupContent(popup);
-    } else {
-      console.log('Cannot update popup - no popup element found');
-    }
+    console.log('Updating popup content from toggleExpanded');
+    this.updatePopupContent(popup);
   }
 
   private toggleTreeVisibility(): void {
@@ -793,16 +814,36 @@ class CascadingMultiSelectControl {
 
     if (!trigger) return;
 
+    // Create a unique popup container for this control instance to avoid conflicts
+    let popupContainer = document.getElementById(`popup-container-${this.instanceId}`);
+    if (!popupContainer) {
+      popupContainer = document.createElement('div');
+      popupContainer.id = `popup-container-${this.instanceId}`;
+      popupContainer.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        z-index: 1000;
+      `;
+      document.body.appendChild(popupContainer);
+      console.log(`Created popup container for control ${this.instanceId}`);
+    }
+
     // Create backdrop
     const backdrop = document.createElement('div');
     backdrop.className = 'popup-backdrop';
-    document.body.appendChild(backdrop);
+    backdrop.style.pointerEvents = 'auto'; // Enable clicks on backdrop
+    popupContainer.appendChild(backdrop);
 
     // Create popup
     const popup = document.createElement('div');
     popup.className = 'tree-popup';
     popup.innerHTML = this.renderTreeItems(this.data, 0);
-    document.body.appendChild(popup);
+    popup.style.pointerEvents = 'auto'; // Enable clicks on popup content
+    popupContainer.appendChild(popup);
 
     // Pre-calculate height constraints - try to use parent window dimensions if in iframe
     const triggerRect = trigger.getBoundingClientRect();
@@ -943,50 +984,130 @@ class CascadingMultiSelectControl {
     backdrop.addEventListener('click', backdropClickHandler);
 
     // Add document click listener to close popup when clicking outside
+    // Create document click handler that only responds to THIS control's events
     const documentClickHandler = (e: Event) => {
-      if (!popup.contains(e.target as Node) && !trigger.contains(e.target as Node)) {
-        this.hideTreePopup();
+      const target = e.target as Node;
+      const clickEvent = e as MouseEvent;
+      
+      console.log('Document click handler fired for control', this.instanceId, 
+                  'target:', (target as any).tagName, (target as any).className,
+                  'coordinates:', clickEvent.clientX, clickEvent.clientY);
+      
+      // Only handle clicks if this control's popup is active
+      if (!this.popupActive) {
+        console.log('Popup not active, ignoring document click');
+        return;
       }
+      
+      // Check if popup was just created (add grace period to avoid immediate closure)
+      const popupAge = Date.now() - ((this.container as any).popupCreatedTime || 0);
+      if (popupAge < 200) { // Increased to 200ms grace period
+        console.log(`Popup too new (${popupAge}ms), ignoring document click`);
+        return;
+      }
+      
+      // Ignore clicks that don't have proper mouse coordinates (likely synthetic/programmatic)
+      if (clickEvent.clientX === 0 && clickEvent.clientY === 0) {
+        console.log('Ignoring synthetic click event (0,0 coordinates)');
+        return;
+      }
+      
+      // Check if click is inside the popup (including all child elements)
+      if (popup.contains(target)) {
+        console.log(`Click detected inside popup for control ${this.instanceId} - keeping popup open`);
+        return; // Click is inside popup, don't close
+      }
+      
+      // Check if click is on the trigger that opens the popup
+      if (trigger.contains(target)) {
+        console.log(`Click detected on trigger for control ${this.instanceId} - keeping popup open`);
+        return; // Click is on trigger, don't close
+      }
+      
+      // Check if the clicked element is part of this control's container
+      if (this.container.contains(target)) {
+        console.log(`Click detected on control element for ${this.instanceId} - keeping popup open`);
+        return; // Click is on control itself, don't close popup
+      }
+      
+      // Click is outside both popup and trigger - close popup
+      console.log(`Document click detected outside control ${this.instanceId} - hiding popup`);
+      this.hideTreePopup();
     };
-    document.addEventListener('click', documentClickHandler);
+    
+    // Store instance reference for cleanup
+    (documentClickHandler as any).controlInstanceId = this.instanceId;
+    
+    // Add document click handler during bubble phase (capture: false) 
+    // so popup's stopPropagation() can prevent it
+    document.addEventListener('click', documentClickHandler, false);
+    console.log('Document click handler attached for control', this.instanceId);
 
-    // Store popup reference and handlers for cleanup
+    // Store popup references and handlers for cleanup
     (this.container as any).popupElement = popup;
     (this.container as any).popupBackdrop = backdrop;
+    (this.container as any).popupContainer = popupContainer;
+    (this.container as any).popupCreatedTime = Date.now(); // Track creation time
     (this.container as any).backdropClickHandler = backdropClickHandler;
     (this.container as any).documentClickHandler = documentClickHandler;
     
     // Set treeVisible to true after popup is created
     this.treeVisible = true;
+    this.popupActive = true;
+    console.log('Popup created and marked as active');
   }
 
   private hideTreePopup(): void {
+    console.log('hideTreePopup called - checking if popup actually needs to be hidden');
+    
     const popup = (this.container as any).popupElement;
     const backdrop = (this.container as any).popupBackdrop;
+    const popupContainer = (this.container as any).popupContainer;
     const backdropClickHandler = (this.container as any).backdropClickHandler;
     const documentClickHandler = (this.container as any).documentClickHandler;
-
-    if (popup) {
-      popup.remove();
-      delete (this.container as any).popupElement;
+    
+    // Only set flags to false if popup actually exists and will be removed
+    if (popup || backdrop) {
+      console.log('Setting treeVisible and popupActive to false - popup will be removed');
+      this.treeVisible = false;
+      this.popupActive = false;
+    } else {
+      console.log('hideTreePopup called but no popup to hide - keeping flags unchanged');
+      return; // Nothing to hide, keep current state
     }
 
-    if (backdrop) {
-      if (backdropClickHandler) {
-        backdrop.removeEventListener('click', backdropClickHandler);
-      }
-      backdrop.remove();
-      delete (this.container as any).popupBackdrop;
-    }
+    // Clear references immediately to prevent stale access
+    delete (this.container as any).popupElement;
+    delete (this.container as any).popupBackdrop;
+    delete (this.container as any).popupContainer;
+    delete (this.container as any).popupCreatedTime;
+    delete (this.container as any).backdropClickHandler;
+    delete (this.container as any).documentClickHandler;
 
     if (documentClickHandler) {
       document.removeEventListener('click', documentClickHandler);
-      delete (this.container as any).documentClickHandler;
+      console.log('Removed document click listener for control', this.instanceId);
     }
 
-    delete (this.container as any).backdropClickHandler;
-    console.log('hideTreePopup called - setting treeVisible to false');
-    this.treeVisible = false;
+    // Remove the entire popup container (which contains both popup and backdrop)
+    if (popupContainer) {
+      console.log('Removing popup container for control', this.instanceId);
+      popupContainer.remove();
+    } else {
+      // Fallback: remove individual elements if container reference is lost
+      if (popup) {
+        console.log('Removing popup from DOM');
+        popup.remove();
+      }
+      
+      if (backdrop) {
+        if (backdropClickHandler) {
+          backdrop.removeEventListener('click', backdropClickHandler);
+        }
+        console.log('Removing backdrop from DOM');
+        backdrop.remove();
+      }
+    }
   }
 
   private updatePopupContent(popup: HTMLElement): void {
@@ -1011,27 +1132,48 @@ class CascadingMultiSelectControl {
   }
 
   private attachPopupEventListeners(popup: HTMLElement): void {
-    console.log('Attaching popup event listeners...');
+    console.log('🔧 Attaching popup event listeners to popup element:', popup.id, popup.className);
+    
+    // Test if the popup element is properly accessible
+    const testButtons = popup.querySelectorAll('.expand-button');
+    console.log('🔧 Found expand buttons in popup:', testButtons.length);
     
     // Use event delegation - attach listeners only once to the popup container
     // These will work even when innerHTML is updated
     
     // Handle all clicks in the popup
-    popup.addEventListener('click', (e) => {
+    const clickHandler = (e: Event) => {
       const target = e.target as HTMLElement;
+      
+      console.log('🔵 POPUP CLICK - Element:', target.tagName, 'Class:', target.className, 'Event phase:', e.eventPhase);
+      console.log('🔵 POPUP CLICK - Target has expand-button class:', target.classList.contains('expand-button'));
+      console.log('🔵 POPUP CLICK - Data attributes:', target.dataset);
       
       // Stop propagation to prevent closing
       e.stopPropagation();
+      console.log('🔵 POPUP CLICK - Event propagation stopped');
       
       if (target.classList.contains('expand-button')) {
         e.preventDefault();
+        console.log('🔵 EXPAND BUTTON CLICK - prevented default and stopped propagation');
+        
         const itemId = target.dataset.itemId;
         if (itemId) {
-          console.log('Expand button clicked in popup for item:', itemId);
+          console.log('🔵 EXPAND BUTTON - Calling toggleExpanded for item:', itemId);
           this.toggleExpanded(itemId);
+        } else {
+          console.log('🔵 EXPAND BUTTON - Warning: no itemId found');
         }
+      } else {
+        console.log('🔵 POPUP CLICK - Not an expand button, just stopped propagation');
       }
-    });
+    };
+    
+    popup.addEventListener('click', clickHandler, false); // Use bubbling phase
+    console.log('🔧 Click event listener attached to popup');
+    
+    // Store reference to handler for debugging
+    (popup as any).clickHandler = clickHandler;
 
     // Handle checkbox changes
     popup.addEventListener('change', (e) => {
