@@ -323,7 +323,8 @@ class IdentityMultiSelectControl {
             for (const identityString of identityStrings) {
                 const identity = await this.parseIdentityString(identityString.trim());
                 if (identity) {
-                    this.selectedIdentities.push(identity);
+                    // Use addIdentityIfNotExists to check for duplicates
+                    this.addIdentityIfNotExists(identity);
                 }
             }
             
@@ -536,24 +537,14 @@ class IdentityMultiSelectControl {
                 descriptor: identity.descriptor
             };
             
-            // Check if already selected
-            if (this.selectedIdentities.some(i => i.id === normalizedIdentity.id)) {
-                console.log('Identity Multi-Select: Identity already selected');
-                return;
+            // Use the centralized method that handles duplicates and max selections
+            const wasAdded = this.addIdentityIfNotExists(normalizedIdentity);
+            
+            if (wasAdded) {
+                this.updateSelectedDisplay();
+                this.updateFieldValue();
+                console.log('Identity Multi-Select: Identity added to selection:', normalizedIdentity.displayName);
             }
-            
-            // Check max selections
-            if (this.selectedIdentities.length >= this.maxSelections) {
-                this.showMessage(`Maximum ${this.maxSelections} selections allowed`);
-                return;
-            }
-            
-            // Add to selected identities
-            this.selectedIdentities.push(normalizedIdentity);
-            this.updateSelectedDisplay();
-            this.updateFieldValue();
-            
-            console.log('Identity Multi-Select: Identity added to selection:', normalizedIdentity.displayName);
             
         } catch (error) {
             console.error('Identity Multi-Select: Error handling identity selection:', error);
@@ -1249,7 +1240,15 @@ class IdentityMultiSelectControl {
     }
 
     private addIdentityIfNotExists(identity: Identity): boolean {
-        if (this.selectedIdentities.some(i => i.id === identity.id || i.uniqueName === identity.uniqueName)) {
+        // Check for duplicates using multiple criteria for better accuracy
+        const isDuplicate = this.selectedIdentities.some(i => 
+            i.id === identity.id || 
+            i.uniqueName === identity.uniqueName ||
+            (i.uniqueName && identity.uniqueName && i.uniqueName.toLowerCase() === identity.uniqueName.toLowerCase()) ||
+            (i.displayName === identity.displayName && i.displayName.toLowerCase() === identity.displayName.toLowerCase())
+        );
+        
+        if (isDuplicate) {
             console.log('Identity Multi-Select: Identity already exists:', identity.displayName);
             return false;
         }
@@ -1630,7 +1629,7 @@ class IdentityMultiSelectControl {
         try {
             console.log('Identity Multi-Select: Setting value from external:', value);
             
-            // Clear current selections
+            // Clear current selections to avoid duplicates
             this.selectedIdentities = [];
             
             // Parse the new value
