@@ -25,9 +25,13 @@ pids
 # Coverage directory used by tools like istanbul
 coverage/
 *.lcov
+test-results.xml
 
 # nyc test coverage
 .nyc_output
+
+# Jest
+jest-results.json
 
 # Dependency directories
 jspm_packages/

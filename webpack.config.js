@@ -8,7 +8,8 @@ module.exports = (env, argv) => {
   return {
     entry: {
       CascadingMultiSelect: './src/CascadingMultiSelect.ts',
-      IdentityMultiSelect: './src/IdentityMultiSelect.ts'
+      IdentityMultiSelect: './src/IdentityMultiSelect.ts',
+      'panel-content': './src/Examples/panel-content/panel-content.tsx'
     },
     output: {
       path: path.resolve(__dirname, 'dist'),
@@ -17,18 +18,22 @@ module.exports = (env, argv) => {
     },
     devtool: isDevelopment ? 'source-map' : false,
     resolve: {
-      extensions: ['.ts', '.js']
+      extensions: ['.ts', '.tsx', '.js', '.jsx']
     },
     module: {
       rules: [
         {
-          test: /\.ts$/,
+          test: /\.tsx?$/,
           use: 'ts-loader',
           exclude: /node_modules/
         },
         {
           test: /\.css$/,
           use: ['style-loader', 'css-loader']
+        },
+        {
+          test: /\.scss$/,
+          use: ['style-loader', 'css-loader', 'sass-loader']
         }
       ]
     },
@@ -47,6 +52,12 @@ module.exports = (env, argv) => {
         inject: 'body',
         scriptLoading: 'blocking'
       }),
+      new HtmlWebpackPlugin({
+        template: './src/Examples/panel-content/panel-content.html',
+        filename: 'panel-content.html',
+        chunks: ['panel-content'],
+        inject: 'body'
+      }),
       new CopyWebpackPlugin({
         patterns: [
           {
@@ -55,7 +66,15 @@ module.exports = (env, argv) => {
           }
         ]
       })
-    ]
+    ],
+    devServer: {
+      static: {
+        directory: path.join(__dirname, 'dist'),
+      },
+      compress: true,
+      port: 3000,
+      hot: true
+    }
     // Removed externals since we're not using SDK imports anymore
   };
 };

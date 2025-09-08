@@ -4,32 +4,53 @@
   "description": "Azure DevOps extension for cascading multi-selection with configurable behavior",
   "main": "dist/CascadingMultiSelect.js",
   "scripts": {
-    "build": "webpack --mode production",
+    "build": "npm run clean && npm run test && webpack --mode production",
+    "build:dev": "npm run clean && webpack --mode development",
     "dev": "webpack --mode development --watch",
     "dev:debug": "webpack --mode development --devtool source-map --watch",
     "serve": "npx http-server . -p 8080 -o",
+    "start:dev": "webpack-dev-server --mode development",
     "debug:local": "npm run dev:debug",
     "package": "tfx extension create --manifest-globs vss-extension.json",
-    "clean": "rimraf dist"
+    "package:dev": "npm run build:dev && npm run package",
+    "clean": "rimraf dist",
+    "test": "cross-env TEST_REPORT_FILENAME=test-results.xml jest --verbose",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@typespec/compiler": "^1.3.0",
-    "azure-devops-extension-api": "^4.0.0",
-    "azure-devops-extension-sdk": "^4.0.0"
+    "azure-devops-extension-api": "^4.234.0",
+    "azure-devops-extension-sdk": "^4.0.0",
+    "azure-devops-ui": "^2.167.63",
+    "react": "~16.13.1",
+    "react-dom": "~16.13.1"
   },
   "devDependencies": {
+    "@babel/core": "^7.21.8",
+    "@testing-library/jest-dom": "^5.11.0",
+    "@testing-library/react": "^10.4.4",
+    "@types/jest": "^26.0.3",
     "@types/node": "^20.0.0",
+    "@types/react": "~16.8.2",
+    "@types/react-dom": "~16.8.0",
     "copy-webpack-plugin": "^13.0.1",
+    "cross-env": "^7.0.3",
     "css-loader": "^6.8.1",
     "html-webpack-plugin": "^5.5.3",
     "http-server": "^14.1.1",
+    "jest": "^26.1.0",
+    "jest-junit-reporter": "^1.1.0",
     "rimraf": "^5.0.1",
+    "sass": "^1.62.1",
+    "sass-loader": "^13.0.0",
     "style-loader": "^3.3.3",
     "tfx-cli": "^0.15.0",
+    "ts-jest": "^26.1.1",
     "ts-loader": "^9.4.4",
     "typescript": "^5.1.6",
     "webpack": "^5.88.2",
-    "webpack-cli": "^5.1.4"
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^5.0.4"
   },
   "keywords": [
     "azure-devops",
@@ -39,5 +60,39 @@
     "work-item"
   ],
   "author": "Jumping Yang",
-  "license": "MIT"
+  "license": "MIT",
+  "jest": {
+    "transform": {
+      "^.+\\.(js|ts|tsx|jsx)$": "ts-jest"
+    },
+    "transformIgnorePatterns": [
+      "node_modules/(?!(react-native|azure-devops-ui|azure-devops-extension-sdk)/)"
+    ],
+    "moduleNameMapper": {
+      "\\.(jpg|jpeg|png|gif|eot|otf|webp|svg|ttf|woff|woff2|mp4|webm|wav|mp3|m4a|aac|oga)$": "<rootDir>/src/__mocks__/fileMock.js",
+      "\\.(css|less|scss)$": "<rootDir>/src/__mocks__/styleMock.js"
+    },
+    "preset": "ts-jest/presets/js-with-babel",
+    "testResultsProcessor": "./node_modules/jest-junit-reporter",
+    "collectCoverage": true,
+    "coverageReporters": [
+      "json",
+      "html",
+      "cobertura"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/azure-devops-extension-sample/"
+    ],
+    "globals": {
+      "ts-jest": {
+        "tsconfig": "tsconfig.test.json"
+      }
+    }
+  },
+  "overrides": {
+    "tfx-cli": {
+      "xml2js": "0.5.0"
+    }
+  }
 }
