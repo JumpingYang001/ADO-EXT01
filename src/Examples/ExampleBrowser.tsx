@@ -25,6 +25,9 @@ const examples: IExampleItem[] = [
     { name: "Pivot", description: "Pivot tab example", category: "SampleExamples", type: "Tab", file: "SampleExamples/Pivot/Pivot.html" },
     { name: "Pills", description: "Pills navigation example", category: "SampleExamples", type: "Navigation", file: "SampleExamples/Pills/Pills.html" },
     
+    // Examples (Our Custom)
+    { name: "Work Item Count Widget", description: "Dashboard widget showing work item counts by type", category: "Examples", type: "Widget", file: "Examples/WorkItemCountWidget/WorkItemCountWidget.html" },
+    
     // Samples - Hub Groups
     { name: "Work Hub Group", description: "Custom work hub", category: "Samples", type: "Hub Group", file: "Samples/work-hub-group/work-hub-group.html" },
     { name: "Code Hub Group", description: "Custom code hub", category: "Samples", type: "Hub Group", file: "Samples/code-hub-group/code-hub-group.html" },
@@ -92,6 +95,7 @@ class ExampleBrowser extends React.Component<{}, {}> {
 
     public render(): JSX.Element {
         const sampleExamples = examples.filter(e => e.category === "SampleExamples");
+        const ourExamples = examples.filter(e => e.category === "Examples");
         const samplesExamples = examples.filter(e => e.category === "Samples");
 
         return (
@@ -110,6 +114,16 @@ class ExampleBrowser extends React.Component<{}, {}> {
                             </p>
                             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))", gap: "8px" }}>
                                 {sampleExamples.map(this.renderExampleCard)}
+                            </div>
+                        </div>
+
+                        <div style={{ marginBottom: "24px" }}>
+                            <h2 style={{ marginBottom: "16px", color: "#323130" }}>🎯 Our Examples (Custom Built)</h2>
+                            <p style={{ marginBottom: "16px", color: "#605e5c" }}>
+                                Custom examples built specifically for this extension, following Microsoft's best practices.
+                            </p>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(400px, 1fr))", gap: "8px" }}>
+                                {ourExamples.map(this.renderExampleCard)}
                             </div>
                         </div>
 

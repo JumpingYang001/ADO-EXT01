@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.141",
+  "version": "1.0.160",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -175,6 +175,26 @@
         "icon": "icon-library",
         "order": 101
       }
+    },
+    {
+      "id": "work-item-count-widget",
+      "type": "ms.vss-dashboards-web.widget",
+      "description": "Shows the total count of work items and breakdown by type",
+      "targets": [
+        "ms.vss-dashboards-web.widget-catalog"
+      ],
+      "properties": {
+        "name": "Work Item Count Widget - dev Jumping",
+        "description": "Shows the total count of work items and breakdown by type (Bugs, Tasks, User Stories)",
+        "catalogIconUrl": "static/sample-icon.png",
+        "uri": "dist/WorkItemCountWidget.html",
+        "isNameConfigurable": true,
+        "supportedSizes": [
+          { "rowSpan": 1, "columnSpan": 2 },
+          { "rowSpan": 1, "columnSpan": 3 }
+        ],
+        "supportedScopes": ["project_team"]
+      }
     }
   ],
   "files": [
@@ -184,6 +204,10 @@
     },
     {
       "path": "images",
+      "addressable": true
+    },
+    {
+      "path": "static",
       "addressable": true
     }
   ]
