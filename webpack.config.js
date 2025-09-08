@@ -9,7 +9,8 @@ module.exports = (env, argv) => {
     entry: {
       CascadingMultiSelect: './src/CascadingMultiSelect.ts',
       IdentityMultiSelect: './src/IdentityMultiSelect.ts',
-      'panel-content': './src/Examples/panel-content/panel-content.tsx'
+      'panel-content': './src/Examples/panel-content/panel-content.tsx',
+      'ExampleBrowser': './src/Examples/ExampleBrowser.tsx'
     },
     output: {
       path: path.resolve(__dirname, 'dist'),
@@ -56,6 +57,12 @@ module.exports = (env, argv) => {
         template: './src/Examples/panel-content/panel-content.html',
         filename: 'panel-content.html',
         chunks: ['panel-content'],
+        inject: 'body'
+      }),
+      new HtmlWebpackPlugin({
+        template: './src/Examples/ExampleBrowser.html',
+        filename: 'ExampleBrowser.html',
+        chunks: ['ExampleBrowser'],
         inject: 'body'
       }),
       new CopyWebpackPlugin({

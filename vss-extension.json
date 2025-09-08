@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.140",
+  "version": "1.0.141",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -160,6 +160,20 @@
         "uri": "dist/panel-content.html",
         "icon": "icon-gear",
         "order": 100
+      }
+    },
+    {
+      "id": "example-browser-hub",
+      "type": "ms.vss-web.hub",
+      "description": "Browse all available extension examples",
+      "targets": [
+        "ms.vss-work-web.work-hub-group"
+      ],
+      "properties": {
+        "name": "Examples Browser",
+        "uri": "dist/ExampleBrowser.html",
+        "icon": "icon-library",
+        "order": 101
       }
     }
   ],
