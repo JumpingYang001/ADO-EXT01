@@ -1,7 +1,7 @@
 {
   "manifestVersion": 1,
   "id": "cascading-multiselect",
-  "version": "1.0.160",
+  "version": "1.0.161",
   "name": "Cascading Multi-Select",
   "scopes": ["vso.work", "vso.work_write"],
   "description": "A configurable cascading multi-selection control for Azure DevOps work items",
@@ -191,7 +191,11 @@
         "isNameConfigurable": true,
         "supportedSizes": [
           { "rowSpan": 1, "columnSpan": 2 },
-          { "rowSpan": 1, "columnSpan": 3 }
+          { "rowSpan": 1, "columnSpan": 3 },
+          { "rowSpan": 2, "columnSpan": 2 },
+          { "rowSpan": 2, "columnSpan": 3 },
+          { "rowSpan": 3, "columnSpan": 2 },
+          { "rowSpan": 3, "columnSpan": 3 }
         ],
         "supportedScopes": ["project_team"]
       }
